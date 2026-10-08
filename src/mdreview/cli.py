@@ -26,6 +26,7 @@ Configuration is flag > environment variable > default; nothing is hardcoded:
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import getpass
 import json
@@ -37,7 +38,7 @@ from pathlib import Path
 
 from . import __version__, store
 from .provenance import collect_provenance
-from .server import THEMES, resolve_ds_dir, resolve_theme, serve
+from .server import MAX_RENDER_BODY_BYTES, THEMES, resolve_ds_dir, resolve_theme, serve
 
 
 def _default_author() -> str:
@@ -83,6 +84,12 @@ def build_parser() -> argparse.ArgumentParser:
     render_p.add_argument(
         "--agent-cwd",
         help="working directory of the invoking agent (default: this process's cwd)",
+    )
+    render_p.add_argument(
+        "--no-capture",
+        action="store_true",
+        help="don't copy the files this document links to (by default they are captured so "
+        "reviewers can open them; credential-like files are never captured)",
     )
 
     serve_p = sub.add_parser("serve", help="serve rendered pages and the comments API")
@@ -155,6 +162,52 @@ def post_render(server_url: str, payload: dict) -> dict:
     return result
 
 
+UPLOAD_LIMIT_REASON = "over the upload size limit"
+
+
+def links_payload(captures: store.Captures, base_payload: dict, *, limit: int) -> dict:
+    """The /api/render ``links`` field, budgeted against the WHOLE serialized
+    request body (JSON escaping can grow markdown well past its byte size).
+    Largest captures are dropped first and recorded as unavailable — in
+    ``captures`` itself, so the printed summary matches what was sent."""
+    if captures.disabled:
+        return {"disabled": True}
+
+    def field() -> dict:
+        encoded = {k: base64.b64encode(v).decode("ascii") for k, v in captures.files.items()}
+        return {"files": encoded, "reasons": dict(captures.reasons)}
+
+    while True:
+        candidate = field()
+        if not captures.files or len(json.dumps({**base_payload, "links": candidate}).encode("utf-8")) <= limit:
+            return candidate
+        largest = max(captures.files, key=lambda target: len(captures.files[target]))
+        del captures.files[largest]
+        captures.reasons[largest] = UPLOAD_LIMIT_REASON
+
+
+def capture_summary(captures: store.Captures) -> list[str]:
+    """What the publisher is exposing: every captured path and every skip."""
+    if captures.disabled:
+        return ["[md-review] linked files: capture turned off (--no-capture)"]
+    if not captures.files and not captures.reasons:
+        return []
+    total_kib = sum(len(data) for data in captures.files.values()) / 1024
+    lines = [
+        f"[md-review] linked files: {len(captures.files)} captured ({total_kib:.1f} KiB), "
+        f"{len(captures.reasons)} not captured"
+    ]
+    lines += [f"  captured      {target}" for target in captures.files]
+    lines += [f"  not captured  {target} — {reason}" for target, reason in captures.reasons.items()]
+    return lines
+
+
+def _print_summary(captures: store.Captures) -> None:
+    # stderr: stdout stays exactly the page path/URL that scripts consume.
+    for line in capture_summary(captures):
+        print(line, file=sys.stderr)
+
+
 def _read_markdown(input_path: Path) -> str:
     try:
         # utf-8-sig: a BOM is silently dropped rather than breaking a leading heading
@@ -181,24 +234,29 @@ def cmd_render(args: argparse.Namespace) -> int:
     repo_root = Path(provenance["sourceRepoRoot"]) if provenance.get("sourceRepoRoot") else None
     source_path = store.display_path_for(input_path, repo_root)
     title = args.title or input_path.stem.replace("-", " ")
+    if args.no_capture:
+        captures = store.Captures(disabled=True)
+    else:
+        captures = store.capture_links(markdown, source_path, repo_root)
 
     server_url = args.server or os.environ.get("MD_REVIEW_SERVER", "").strip()
     if server_url:
-        result = post_render(
-            server_url,
-            {
-                "markdown": markdown,
-                "filename": input_path.name,
-                "sourcePath": source_path,
-                "title": title,
-                "provenance": provenance,
-            },
-        )
+        payload = {
+            "markdown": markdown,
+            "filename": input_path.name,
+            "sourcePath": source_path,
+            "title": title,
+            "provenance": provenance,
+        }
+        payload["links"] = links_payload(captures, payload, limit=MAX_RENDER_BODY_BYTES)
+        result = post_render(server_url, payload)
+        _print_summary(captures)
         print(f"{server_url.rstrip('/')}{result['url']}")
         return 0
 
     data_dir = store.resolve_data_dir(args.data_dir)
-    out = store.render_document(input_path, data_dir, args.title, provenance=provenance)
+    out = store.render_document(input_path, data_dir, args.title, provenance=provenance, captures=captures)
+    _print_summary(captures)
     print(out)
     return 0
 

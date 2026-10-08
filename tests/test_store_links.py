@@ -69,7 +69,7 @@ class LinkEntryTests(unittest.TestCase):
         key = links.link_key("docs/reports/a.md")
         self.assertIn(f'href="/link/{doc_id}/{key}#sec"', html)
         self.assertIn(f'<img src="/link/{doc_id}/{links.link_key("docs/d.png")}"', html)
-        self.assertEqual(3, html.count("md-link-unavailable-mark"))
+        self.assertEqual(3, html.count('<span class="md-link-unavailable-mark"'))
 
     def test_blobs_are_content_addressed_and_unreferenced_ones_removed_on_rerender(self) -> None:
         page = render(self.data, "[d](data.csv)\n", store.Captures(files={"docs/data.csv": b"v1\n"}, reasons={}))

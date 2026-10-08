@@ -309,12 +309,14 @@ def render_document(
     session_id: str | None = None,
     agent_cwd: str | None = None,
     capture: bool = True,
+    captures: Captures | None = None,
 ) -> Path:
     """Render ``input_path`` into the store and return the page path.
 
     ``provenance`` may be supplied by a caller that collected it on another
     machine (see the /api/render route); otherwise it is collected locally.
-    ``capture`` copies the files the document links to (see capture_links).
+    ``capture`` copies the files the document links to (see capture_links);
+    a caller that already captured (to report on it) passes ``captures``.
     """
     if input_path.suffix.lower() != ".md":
         raise ValueError(f"render input must be a .md file: {input_path}")
@@ -331,7 +333,8 @@ def render_document(
     # utf-8-sig: a BOM is silently dropped rather than breaking a leading
     # heading (the renderer has no BOM handling, by design)
     markdown = input_path.read_text(encoding="utf-8-sig")
-    captures = capture_links(markdown, source_path, repo_root) if capture else Captures(disabled=True)
+    if captures is None:
+        captures = capture_links(markdown, source_path, repo_root) if capture else Captures(disabled=True)
     return render_payload(
         markdown=markdown,
         source_path=source_path,

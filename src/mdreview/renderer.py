@@ -718,6 +718,9 @@ a {{ color: var(--rds-accent-strong); text-decoration-thickness: 1px; text-under
 .md-code {{ margin: 18px 0; padding: 14px 16px; overflow: auto; background: var(--rds-surface-rail); border: 1px solid var(--rds-line); border-radius: 8px; font-size: 12px; line-height: 1.55; }}
 .md-inline-code {{ padding: 0.15em 0.4em; margin: 0 1px; border-radius: 4px; background: var(--rds-surface-rail); border: 1px solid var(--rds-line); font-size: 0.9em; }}
 .md-link-inert {{ color: var(--rds-text-faint); text-decoration: underline dashed; text-decoration-color: var(--caution-edge); cursor: not-allowed; }}
+.md-link-unavailable {{ color: var(--rds-text-faint); text-decoration: underline dotted; text-decoration-color: var(--caution-edge); }}
+.md-link-unavailable-mark {{ margin-left: 2px; font-size: 0.8em; color: var(--caution-edge); }}
+.md-link-local img {{ max-width: 100%; height: auto; border-radius: 6px; }}
 .md-rule {{ border: 0; border-top: 1px solid var(--rds-line); margin: 24px 0; }}
 .md-table {{ width: 100%; border-collapse: collapse; margin: 18px 0 24px; font-size: 13px; }}
 .md-table th, .md-table td {{ border: 1px solid var(--rds-line); padding: 7px 9px; vertical-align: top; }}
