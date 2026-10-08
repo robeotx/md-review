@@ -19,6 +19,9 @@ called out explicitly).
   take up to one sync to appear. Searching is substring-based (no stemming,
   no OR or phrases); text past 2 MB per item is searchable up to that cap
   and marked partial.
+- A doc whose `createdAt` is more than a day in the future stays above all
+  others in every search and listing. The margin keeps clock skew from
+  pinning anything.
 
 ## [0.5.0] — 2026-10-07
 

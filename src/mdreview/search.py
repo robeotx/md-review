@@ -23,7 +23,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import quote
@@ -42,6 +42,9 @@ MAX_MATCHES_PER_GROUP = 20
 SYNC_INTERVAL_S = 2.0
 PUBLISH_EVERY = 25
 SNIPPET_RADIUS = 60
+# A createdAt this far ahead of now pins the doc above every unpinned doc. A deliberate far-future date
+# is the only way to pin; the margin keeps ordinary clock skew from pinning.
+PIN_MARGIN = timedelta(days=1)
 MIN_LITERAL_CHARS = 3
 SORT_FIELDS = ("modified", "created")
 STANDALONE_KEY = "standalone"
@@ -680,7 +683,11 @@ class SearchIndex:
             facet_counts.setdefault(key, 0)
 
         hits.sort(key=lambda hit: (hit[0].title.casefold(), hit[0].doc_id))
-        hits.sort(key=lambda hit: _date_sort_key(_sort_date(hit[0], sort)), reverse=True)
+        now = datetime.now(_UTC)
+        hits.sort(
+            key=lambda hit: (_is_pinned(hit[0], now), _date_sort_key(_sort_date(hit[0], sort))),
+            reverse=True,
+        )
 
         groups = []
         for record, doc_hit, children in hits[offset : offset + limit]:
@@ -703,6 +710,10 @@ class SearchIndex:
             "indexing": {"done": progress[0], "total": progress[1]},
             "truncatedItems": truncated_items,
         }
+
+
+def _is_pinned(record: DocRecord, now: datetime) -> bool:
+    return record.created is not None and record.created > now + PIN_MARGIN
 
 
 def _date_sort_key(moment: datetime | None) -> tuple[int, datetime]:

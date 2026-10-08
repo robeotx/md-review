@@ -12,7 +12,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from mdreview import search, store
@@ -509,6 +509,54 @@ class ReviewFindingTests(unittest.TestCase):
         group = self.index.search(terms=["rewrite"])["groups"][0]
         self.assertEqual(len(group["matches"]), search.MAX_MATCHES_PER_GROUP)
         self.assertEqual(group["matchCount"], 25)
+
+
+class PinningTests(unittest.TestCase):
+    """A createdAt more than a day in the future pins a doc to the top."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.data_dir = Path(self._tmp.name) / "data"
+        store.ensure_data_dir(self.data_dir)
+        self.index = search.SearchIndex(self.data_dir)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _doc(self, doc_id: str, rendered_at: str, created_at: str | None = None) -> None:
+        _write_doc_dir(
+            self.data_dir,
+            doc_id,
+            title=doc_id,
+            body_html=_article("t"),
+            manifest=_manifest(doc_id, rendered_at, created_at=created_at),
+            comments=[],
+        )
+
+    def _ids(self, result: dict) -> list[str]:
+        return [group["doc"]["docId"] for group in result["groups"]]
+
+    def test_future_dated_doc_stays_on_top_over_newer_activity(self) -> None:
+        self._doc("board", "2026-10-01T00:00:00+00:00", created_at="2099-01-01T00:00:00+00:00")
+        self._doc("busy", "2026-10-09T00:00:00+00:00")
+        self.index.sync()
+        self.assertEqual(self._ids(self.index.search()), ["board", "busy"])
+        self.assertEqual(self._ids(self.index.search(sort="created")), ["board", "busy"])
+
+    def test_pinned_docs_sort_by_the_active_key_among_themselves(self) -> None:
+        self._doc("pin-a", "2026-10-01T00:00:00+00:00", created_at="2099-02-01T00:00:00+00:00")
+        self._doc("pin-b", "2026-10-02T00:00:00+00:00", created_at="2099-01-01T00:00:00+00:00")
+        self._doc("plain", "2026-10-09T00:00:00+00:00")
+        self.index.sync()
+        self.assertEqual(self._ids(self.index.search()), ["pin-b", "pin-a", "plain"])
+        self.assertEqual(self._ids(self.index.search(sort="created")), ["pin-a", "pin-b", "plain"])
+
+    def test_a_near_future_date_from_clock_skew_does_not_pin(self) -> None:
+        near = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        self._doc("skewed", "2026-10-01T00:00:00+00:00", created_at=near)
+        self._doc("busy", "2026-10-09T00:00:00+00:00")
+        self.index.sync()
+        self.assertEqual(self._ids(self.index.search()), ["busy", "skewed"])
 
 
 if __name__ == "__main__":
