@@ -209,6 +209,31 @@ class ReviewFindingsTests(unittest.TestCase):
         self.assertIn("sha256", by_target(page)["docs/d.txt"])
         self.assertEqual([b"2222"], [p.read_bytes() for p in (page.parent / "files").iterdir()])
 
+    def test_retained_attachments_are_charged_so_refreshes_cannot_grow_past_quota(self) -> None:
+        stored_sizes = []
+        md = ""
+        with mock.patch.object(store, "STORE_ATTACHMENT_QUOTA", 4):
+            files: dict[str, bytes] = {}
+            for i in range(3):
+                files[f"docs/f{i}.txt"] = f"{i}{i}{i}{i}".encode()
+                md += f"[f{i}](f{i}.txt) "
+                page = render(self.data, md + "\n", store.Captures(files=dict(files), reasons={}))
+                stored_sizes.append(sum(p.stat().st_size for p in (page.parent / "files").iterdir()))
+        self.assertEqual([4, 4, 4], stored_sizes)
+
+    def test_failed_write_after_blobs_removes_this_renders_new_blobs(self) -> None:
+        page = render(self.data, "[d](d.txt)\n", store.Captures(files={"docs/d.txt": b"1111"}, reasons={}))
+        real_write = store._atomic_write
+
+        def fail_on_links(path, content, **kwargs):
+            if path.name == "links.json":
+                raise OSError("disk full")
+            return real_write(path, content, **kwargs)
+
+        with mock.patch.object(store, "_atomic_write", fail_on_links), self.assertRaises(OSError):
+            render(self.data, "[d](d.txt)\n", store.Captures(files={"docs/d.txt": b"2222"}, reasons={}))
+        self.assertEqual([b"1111"], [p.read_bytes() for p in (page.parent / "files").iterdir()])
+
     def test_orphans_from_failed_renders_are_removed_and_never_credited(self) -> None:
         page = render(self.data, "[d](d.txt)\n", store.Captures(files={"docs/d.txt": b"1111"}, reasons={}))
         orphan = page.parent / "files" / ("f" * 64)  # a blob no links.json references

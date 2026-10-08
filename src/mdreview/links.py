@@ -192,6 +192,10 @@ def capture_file(path: Path, boundary: Path, identity: str) -> bytes:
 
 _FILE_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
 _CAN_WALK = os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY")
+# O_PATH (Linux) opens a directory for traversal with search (x) permission
+# alone, matching what a plain open() of the file needs; without it, an
+# execute-only ancestor would block capture that a direct read allows.
+_DIR_FLAGS = (getattr(os, "O_PATH", 0) or os.O_RDONLY) | getattr(os, "O_DIRECTORY", 0)
 
 
 def _open_without_symlinks(resolved: Path) -> int:
@@ -207,10 +211,10 @@ def _open_without_symlinks(resolved: Path) -> int:
     parts = list(resolved.parts[1:])
     if not parts:
         raise IsADirectoryError(str(resolved))
-    dir_fd = os.open(resolved.anchor, os.O_RDONLY | os.O_DIRECTORY)
+    dir_fd = os.open(resolved.anchor, _DIR_FLAGS)
     try:
         for part in parts[:-1]:
-            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+            next_fd = os.open(part, _DIR_FLAGS | os.O_NOFOLLOW, dir_fd=dir_fd)
             os.close(dir_fd)
             dir_fd = next_fd
         return os.open(parts[-1], _FILE_FLAGS, dir_fd=dir_fd)

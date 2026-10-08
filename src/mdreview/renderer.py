@@ -139,7 +139,8 @@ def render_inline_unlinked(text: str) -> str:
     for outline entries, which are links themselves (nesting <a> is invalid)
     and render outside any resolver. Stripping the OUTPUT keeps code spans
     intact, and is exact: user text is escaped, so every `<a` here is ours."""
-    return re.sub(r"</?a\b[^>]*>", "", render_inline(text))
+    # `!?`: with no resolver an image renders as `!<a …>alt</a>`; its `!` goes too.
+    return re.sub(r"!?<a\b[^>]*>|</a>", "", render_inline(text))
 
 
 def render_inline(text: str) -> str:

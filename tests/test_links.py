@@ -174,6 +174,16 @@ class CaptureReviewFindingsTests(TempRootCase):
         with mock.patch.object(Path, "resolve", swap_then_resolve), self.assertRaises(links.Unavailable):
             links.capture_file(self.root / "docs/r.txt", self.root, "docs/r.txt")
 
+    @unittest.skipUnless(os.name == "posix" and hasattr(os, "O_PATH") and os.geteuid() != 0, "linux, non-root")
+    def test_execute_only_ancestor_still_allows_capture(self) -> None:
+        self.write("locked/r.txt", b"ok\n")
+        os.chmod(self.root / "locked", 0o111)
+        try:
+            data = links.capture_file(self.root / "locked/r.txt", self.root, "locked/r.txt")
+        finally:
+            os.chmod(self.root / "locked", 0o755)  # before tearDown removes the tree
+        self.assertEqual(b"ok\n", data)
+
     @unittest.skipUnless(os.name == "posix", "posix openat walk")
     def test_boundary_itself_swapped_for_a_symlink_after_resolution_is_refused(self) -> None:
         outside = tempfile.TemporaryDirectory()

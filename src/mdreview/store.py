@@ -258,7 +258,10 @@ class _LinkTable:
                 reason = PER_DOC_REASON
             else:
                 sha = hashlib.sha256(data).hexdigest()
-                charge = 0 if sha in self.already_stored or sha in self.blobs else len(data)
+                # Every blob this render keeps is charged once — retained ones
+                # too, since the doc's own stored bytes were credited back to
+                # quota_room. Only a duplicate within this render is free.
+                charge = 0 if sha in self.blobs else len(data)
                 if charge > self.quota_room:
                     reason = "not captured (server storage limit reached)"
                 else:
@@ -540,15 +543,28 @@ def render_payload(
         # Blobs first (content-addressed, so a reader of the OLD links.json
         # still finds its files), then links.json and the page; obsolete
         # blobs are removed only after nothing written here references them.
-        if table.blobs:
-            files_dir.mkdir(exist_ok=True)
-            if os.name == "posix":
-                os.chmod(files_dir, 0o700)
-            for sha, data in table.blobs.items():
-                if sha not in stored:
-                    _atomic_write(files_dir / sha, data)
-        for path, data in encoded:
-            _atomic_write(path, data)
+        written: list[Path] = []
+        try:
+            if table.blobs:
+                files_dir.mkdir(exist_ok=True)
+                if os.name == "posix":
+                    os.chmod(files_dir, 0o700)
+                for sha, data in table.blobs.items():
+                    if sha not in stored:
+                        _atomic_write(files_dir / sha, data)
+                        written.append(files_dir / sha)
+            for path, data in encoded:
+                _atomic_write(path, data)
+        except BaseException:
+            # A failure before the new links.json lands leaves the old one in
+            # charge: remove this render's new blobs so they can't sit
+            # unreferenced (and uncounted against intent) until the next render.
+            with contextlib.suppress(OSError):  # never mask the original failure
+                links_file = out_dir / "links.json"
+                if not links_file.exists() or encoded[0][1] != links_file.read_bytes():
+                    for blob in written:
+                        blob.unlink(missing_ok=True)
+            raise
         if files_dir.is_dir():
             for blob in files_dir.iterdir():
                 if SHA256_RE.match(blob.name) and blob.name not in table.blobs:

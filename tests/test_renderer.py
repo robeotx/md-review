@@ -625,6 +625,12 @@ class ReviewFindingsRendererTests(unittest.TestCase):
         self.assertNotIn("href", toc.split(">", 1)[1])
         self.assertIn("Guide report", toc)
 
+    def test_toc_shows_an_image_heading_by_its_alt_text(self) -> None:
+        renderer = MarkdownRenderer()
+        page = page_html("T", "src.md", "doc-1", renderer.render("# Guide ![diagram](d.png)\n"), [], renderer.toc)
+        toc = page.split('class="toc-l1"', 1)[1].split("</a>", 1)[0].split(">", 1)[1]
+        self.assertEqual("Guide diagram", toc)
+
     def test_toc_keeps_code_spans_and_never_nests_links(self) -> None:
         for heading, expected in (("# Guide `[x](r.md)`\n", "[x](r.md)"), ("# Guide [a `]` b](r.md)\n", None)):
             renderer = MarkdownRenderer()
