@@ -39,8 +39,12 @@ from __future__ import annotations
 import html
 import json
 import re
+from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from hashlib import sha1
+
+from .links import split_relative_href
 
 
 def short_hash(text: str, n: int = 12) -> str:
@@ -100,6 +104,34 @@ def _safe_href(href: str) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class LinkRendering:
+    """How a relative link renders, as decided by the caller's resolver.
+
+    ``css_class`` is ``md-link-local`` (a viewable target) or
+    ``md-link-unavailable`` (gets a visible mark; its href still explains why).
+    ``image`` is True only for a captured image the page may embed.
+    """
+
+    href: str
+    css_class: str
+    title: str = ""
+    image: bool = False
+
+
+# (raw relative href, written as an image?) -> rendering, or None for the
+# default treatment. Set for the duration of MarkdownRenderer.render, so the
+# many render_inline call sites need no plumbing (and threads don't share it).
+LinkResolver = Callable[[str, bool], "LinkRendering | None"]
+_LINK_RESOLVER: ContextVar[LinkResolver | None] = ContextVar("md_link_resolver", default=None)
+
+
+def _attr(value: str) -> str:
+    # Attribute values are emitted BEFORE the emphasis regexes run over the
+    # line, so a literal `*` would let `*x*` grow <em> tags inside the value.
+    return html.escape(value, quote=True).replace("*", "&#42;")
+
+
 def render_inline(text: str) -> str:
     # Code spans are pulled out FIRST and swapped for a punctuation-free
     # placeholder before bold/italic/link markup is processed. This matters for
@@ -141,7 +173,9 @@ def render_inline(text: str) -> str:
     escaped = escaped.replace("\\|", "|")
 
     def link_repl(match: re.Match[str]) -> str:
-        label = match.group(1)
+        bang, label = match.group(1), match.group(2)
+        if not label and not bang:
+            return match.group(0)  # `[](x)` was never a link here; leave it as text
         # match.group(2) comes from the ALREADY-escaped text. Two unescape
         # levels matter for TWO different reasons:
         #   - CLASSIFY on the double-unescaped form: `[x](javascript&#58;…)`
@@ -155,13 +189,24 @@ def render_inline(text: str) -> str:
         #      never receives a decodable colon-entity (browsers decode
         #      attributes once), so even the "allowed but weird" forms can't
         #      spring back to life as a scheme.
-        raw_href = html.unescape(match.group(2))
+        raw_href = html.unescape(match.group(3))
         if _safe_href(html.unescape(raw_href)) is None:
             # Inert: label stays readable, the link cannot execute or navigate.
-            return f'<span class="md-link-inert" title="link target blocked (scheme not allowed)">{label}</span>'
-        return f'<a href="{html.escape(raw_href, quote=True)}">{label}</a>'
+            return f'{bang}<span class="md-link-inert" title="link target blocked (scheme not allowed)">{label}</span>'
+        resolver = _LINK_RESOLVER.get()
+        rendering = resolver(raw_href, bool(bang)) if resolver and split_relative_href(raw_href) else None
+        if rendering is None:
+            return f'{bang}<a href="{html.escape(raw_href, quote=True)}">{label}</a>'
+        opening = f'<a class="{_attr(rendering.css_class)}" href="{_attr(rendering.href)}" title="{_attr(rendering.title)}">'
+        if bang and rendering.image:
+            alt = _attr(html.unescape(label))
+            return f'{opening}<img src="{_attr(rendering.href.partition("#")[0])}" alt="{alt}" loading="lazy"></a>'
+        mark = ""
+        if rendering.css_class == "md-link-unavailable":
+            mark = '<span class="md-link-unavailable-mark" aria-hidden="true">⊘</span>'
+        return f"{opening}{label or 'image'}{mark}</a>"
 
-    escaped = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", link_repl, escaped)
+    escaped = re.sub(r"(!?)\[([^\]]*)\]\(([^)]+)\)", link_repl, escaped)
     escaped = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", escaped)
     escaped = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", escaped)
 
@@ -205,7 +250,8 @@ class Anchor:
 
 
 class MarkdownRenderer:
-    def __init__(self) -> None:
+    def __init__(self, link_resolver: LinkResolver | None = None) -> None:
+        self.link_resolver = link_resolver
         self.heading_path: list[str] = []
         # Levels are tracked alongside the path because ancestry is defined by
         # heading LEVEL, not list position: a doc that opens at ### then moves
@@ -250,6 +296,13 @@ class MarkdownRenderer:
         return base if seen == 0 else f"{base}-{seen}"
 
     def render(self, markdown: str) -> str:
+        token = _LINK_RESOLVER.set(self.link_resolver)
+        try:
+            return self._render(markdown)
+        finally:
+            _LINK_RESOLVER.reset(token)
+
+    def _render(self, markdown: str) -> str:
         # NUL is never legitimate in markdown and is actively dangerous here:
         # render_inline uses \x00{n}\x00 as the code-span placeholder, so a
         # source-provided NUL could collide with the placeholder format and

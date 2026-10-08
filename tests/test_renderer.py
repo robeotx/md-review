@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from mdreview.renderer import MarkdownRenderer, page_html
+from mdreview.renderer import LinkRendering, MarkdownRenderer, page_html
 
 
 class MarkdownRendererTests(unittest.TestCase):
@@ -537,6 +537,57 @@ class FragmentTests(unittest.TestCase):
         self.assertIn("function resolveFragment()", html_out)
         self.assertIn("window.addEventListener('hashchange', resolveFragment)", html_out)
         self.assertIn("document.querySelector('[data-slug=\"' + CSS.escape(slug) + '\"]')", html_out)
+
+
+class LinkResolverTests(unittest.TestCase):
+    """The renderer exposes relative links to a resolver hook; it never decides
+    file policy itself."""
+
+    def render(self, markdown: str, resolver) -> str:
+        return MarkdownRenderer(link_resolver=resolver).render(markdown)
+
+    @staticmethod
+    def always(rendering: LinkRendering):
+        def resolver(href: str, is_image: bool) -> LinkRendering:
+            return rendering
+
+        return resolver
+
+    def test_without_a_resolver_links_and_images_render_as_before(self) -> None:
+        body = MarkdownRenderer().render("See [r](reports/a.md) and ![d](d.png).\n")
+        self.assertIn('<a href="reports/a.md">r</a>', body)
+        self.assertIn('!<a href="d.png">d</a>', body)
+
+    def test_resolver_rewrites_relative_links_and_sees_raw_href(self) -> None:
+        seen = []
+
+        def resolver(href, is_image):
+            seen.append((href, is_image))
+            return LinkRendering(href="/link/doc-1/abc#sec", css_class="md-link-local", title="reports/a.md")
+
+        body = self.render("See [r](reports/a.md#sec) and [w](https://e.com/x).\n", resolver)
+        self.assertIn('<a class="md-link-local" href="/link/doc-1/abc#sec" title="reports/a.md">r</a>', body)
+        self.assertIn('href="https://e.com/x"', body)  # non-relative: resolver not consulted
+        self.assertEqual([("reports/a.md#sec", False)], seen)
+
+    def test_captured_image_renders_as_img_wrapped_in_its_link(self) -> None:
+        resolver = self.always(LinkRendering(href="/link/d/k", css_class="md-link-local", title="d.png", image=True))
+        body = self.render("![A diagram](img/d.png)\n", resolver)
+        self.assertIn('<a class="md-link-local" href="/link/d/k" title="d.png"><img src="/link/d/k" alt="A diagram" loading="lazy"></a>', body)
+
+    def test_unavailable_link_is_marked_visibly(self) -> None:
+        resolver = self.always(LinkRendering(href="/link/d/k", css_class="md-link-unavailable", title="too large"))
+        body = self.render("[big](big.bin) and ![](gone.png)\n", resolver)
+        self.assertIn('class="md-link-unavailable"', body)
+        self.assertEqual(2, body.count('<span class="md-link-unavailable-mark" aria-hidden="true">⊘</span>'))
+        self.assertNotIn("<img", body)
+
+    def test_hostile_resolver_output_and_alt_text_are_escaped(self) -> None:
+        resolver = self.always(LinkRendering(
+            href='/link/d/k#"><script>x</script>', css_class="md-link-local", title='"><script>t</script>', image=True
+        ))
+        body = self.render('![a"><script>alt</script>](x.png) [l](y.md)\n', resolver)
+        self.assertNotIn("<script>", body)
 
 
 if __name__ == "__main__":
