@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling>=1.18,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "md-review"
+version = "0.4.3"
+description = "LAN-only markdown review server: render markdown into commentable review pages and collect anchored comments from any device on your local network."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "robeotx" }]
+keywords = ["markdown", "review", "comments", "annotation", "lan", "documentation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Text Processing :: Markup :: Markdown",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["ruff>=0.6"]
+
+[project.urls]
+Homepage = "https://github.com/robeotx/md-review"
+
+[project.scripts]
+md-review = "mdreview.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mdreview"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/mdreview", "tests", "README.md", "LICENSE", "NOTICE"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM"]
+ignore = [
+    # HTML/JS embedded in f-strings legitimately produces long lines.
+    "E501",
+]
+
+[tool.pyright]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+include = ["src", "tests"]

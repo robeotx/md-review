@@ -1,0 +1,228 @@
+/* ============================================================
+   Design system — CANONICAL THEMED PALETTE
+   ------------------------------------------------------------
+   The single source of truth for color + theme. One semantic
+   vocabulary, prefixed `--rds-*`, defined once and re-themed by
+   `[data-theme]`. Both tiers' surface/ink/line/accent tokens
+   resolve to these (see design-app/tokens.css) — so there is exactly ONE value per slot and ONE
+   place dusk/dark are defined.
+
+   Governing rule: one name per value; two names only when two
+   values. The tiers keep separate tokens ONLY where the values
+   genuinely differ (type scale, spacing/density) — never for color.
+
+   Themes (one attribute on an ancestor, normally <html>):
+     (none)              → Light
+     data-theme="dusk"   → Dusk Slate
+     data-theme="dark"   → Warm Chalkboard
+
+   Load FIRST so every aliasing token can resolve it. Derived tokens (*-soft, *-muted) are color-mix of canonical
+   tokens, so they re-theme automatically.
+   ============================================================ */
+
+:root {
+  /* ----- Surfaces — warm paper. Card lifts UP, rail recesses DOWN ----- */
+  --rds-surface:           #F6F5EF;
+  --rds-surface-card:      #FDFCF8;
+  --rds-surface-rail:      #F0EFE9;
+  --rds-surface-tint:      #F0F4F8; /* blue-tinted, special emphasis */
+  /* Half-step surfaces — depth is surface tone, not shadow, and two
+     hard steps in each direction is too coarse for dense product UI. These
+     intermediate steps are the common case: rails recess to -rail-soft (full
+     -rail reads as "an off, heavy grey" on a large panel; bare --rds-surface
+     makes the rail vanish), inline cards lift to -card-soft (full -card is too
+     bright a jump for a small inline card). Reserve the full -card/-rail tokens
+     for STRONG separations (docks, deep wells). */
+  --rds-surface-rail-soft: color-mix(in srgb, var(--rds-surface-rail) 70%, var(--rds-surface));
+  --rds-surface-card-soft: color-mix(in srgb, var(--rds-surface-card) 42%, var(--rds-surface));
+
+  /* ----- Borders ----- */
+  --rds-line:        #E8E5DC;
+  --rds-line-light:  #F0EDE6;
+  --rds-line-strong: #E0DDD4;
+
+  /* ----- Ink — warm dark slate. 5-step ramp + role tokens ----- */
+  --rds-ink:    #3A3B37;
+  --rds-ink-2:  #4A4B47;
+  --rds-ink-3:  #5A5B57;
+  --rds-ink-4:  #6A6B67;
+  --rds-ink-5:  #858580;
+  --rds-text:             #424751; /* default body copy */
+  --rds-text-muted:       #5A5B57;
+  --rds-text-faint:       #6A6B67;
+  --rds-text-placeholder: #B8C1D0;
+
+  /* ----- Accent — coral is the discipline ----- */
+  --rds-accent:        #C07C74;
+  --rds-accent-strong: #A8645C;
+  --rds-accent-mark:   #BA7771; /* a brand-mark hue, cooler than accent */
+  --rds-accent-wash:   rgba(192, 124, 116, 0.10);
+  /* The ONE blessed muted coral — coral-family so it ties to the brand, but
+     clearly NOT the user's-mark accent, so coral discipline holds. For quiet
+     structural marks (section sub-header bars), never for signal. Distinct from
+     --rds-accent (the mark) and --danger (destructive). */
+  --rds-accent-muted:  color-mix(in srgb, var(--rds-accent) 80%, var(--rds-ink-4));
+
+  /* ----- Scrim — the world-muting veil behind an overlay -----
+     A warm dark veil that dims + recedes whatever is behind the floating
+     capture surface (the app, OR other desktop apps) so it becomes the one lit
+     anchor for the user's focus. Pair with a small backdrop blur in CSS. */
+  --rds-scrim: rgba(38, 34, 28, 0.30);
+
+  /* ----- Categorical accents — domain-agnostic category hues.
+     Surfaced through `tone` on Badge/Chip/Card; the consumer maps eras/facets/
+     categories onto these names — the DS never bakes in a domain. ----- */
+  --accent-slate:  #6E7480;
+  --accent-purple: #8B6F9B;
+  --accent-blue:   #5E7CA3;
+  --accent-sage:   #6F8E6C;
+  --accent-amber:  #B0883A;
+  --accent-coral:  #C07C74;
+
+  /* ----- Status roles — verdict/status semantics ----- */
+  --rds-status-positive: #8BA888; /* sage */
+  --rds-status-caution:  #C9A24B; /* amber */
+  --rds-status-neutral:  var(--rds-ink-5);
+
+  /* ----- Danger — destructive actions + validation errors (the app value). Deeper and browner than
+         --rds-accent so it never reads as "the accent." ----- */
+  --danger: #B26658;
+
+  /* ----- The one sanctioned shadow — modals/floating overlays only (warm-tinted light + tuned dark
+         alphas). No cold black on warm paper. ----- */
+  --shadow-pop: 0 8px 28px rgba(40, 35, 25, 0.10);
+
+  /* ----- Canonical font stacks — ONE chain per role. The tier
+     aliases (--hyper/--sans, --serif/--crimson, --figtree, --mono) point here. ----- */
+  --rds-font-sans:    'Atkinson Hyperlegible Next', 'Atkinson Hyperlegible', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --rds-font-serif:   'Source Serif 4', Georgia, 'Times New Roman', serif;
+  --rds-font-mono:    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --rds-font-display: 'Figtree', system-ui, sans-serif;
+}
+
+/* ---------- DARK · Warm Chalkboard ---------- */
+[data-theme="dark"] {
+  --rds-surface:      #2F2F32;
+  --rds-surface-card: #383A3E;
+  --rds-surface-rail: #272729;
+  --rds-surface-tint: #423E37;
+
+  --rds-line:        #46464B;
+  --rds-line-light:  #3C3C40;
+  --rds-line-strong: #54545A;
+
+  --rds-ink:    #E5DECA;
+  --rds-ink-2:  #D1CDBC;
+  --rds-ink-3:  #BCB8A8;
+  --rds-ink-4:  #918F86;
+  /* faint ink lifted from #5F5E58: on the dark card it fell to ~1.9:1, so
+     status metadata read as too dim. This sits ~3:1 while staying muted. */
+  --rds-ink-5:  #83817A;
+  --rds-text:             #BCB8A8;
+  --rds-text-muted:       #918F86;
+  --rds-text-faint:       #76746E;
+  --rds-text-placeholder: #4B4A45;
+
+  --rds-accent:        #D9928A;
+  --rds-accent-strong: #C57569;
+  --rds-accent-mark:   #E0A099;
+  /* same lift as dusk: flat 10% coral wash is invisible on the dark surface */
+  --rds-accent-wash:   rgba(217, 146, 138, 0.20);
+  --rds-scrim: rgba(12, 11, 10, 0.46);
+
+  /* Categorical accents — chalk-tone, still mid-saturation for white text
+     (Lamplit Umber inherits these from dark, per its design). */
+  --accent-slate:  #767C88;
+  --accent-purple: #9079A0;
+  --accent-blue:   #6E8CB5;
+  --accent-sage:   #779471;
+  --accent-amber:  #B58C3E;
+  --accent-coral:  #C77F76;
+
+  /* Status — chalk-brightened so the hue reads on graphite. */
+  --rds-status-positive: #9DB89A;
+  --rds-status-caution:  #D8B45E;
+
+  /* Danger + the one shadow — dark-tuned. */
+  --danger:     #D67A6E;
+  --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+/* ---------- DUSK · Dusk Slate ---------- */
+[data-theme="dusk"] {
+  --rds-surface:      #414653;
+  --rds-surface-card: #4A5161;
+  --rds-surface-rail: #3A3F4B;
+  --rds-surface-tint: #424F62;
+
+  --rds-line:        #525A6A;
+  --rds-line-light:  #4A5161;
+  --rds-line-strong: #5F6678;
+
+  --rds-ink:    #ECE6D4;
+  --rds-ink-2:  #DAD5C5;
+  --rds-ink-3:  #C5C1B5;
+  --rds-ink-4:  #ADABA1;
+  /* faint ink lifted from #777670: on dusk's lighter blue surfaces the old
+     value fell to ~1.7:1 — status metadata blended in. This sits ~3:1. */
+  --rds-ink-5:  #A4A298;
+  --rds-text:             #C5C1B5;
+  --rds-text-muted:       #ADABA1;
+  --rds-text-faint:       #8E8C84;
+  --rds-text-placeholder: #6A6962;
+
+  --rds-accent:        #D8918A;
+  --rds-accent-strong: #C47A72;
+  --rds-accent-mark:   #DD9E96;
+  /* the flat 10% coral wash is near-invisible over dark blue — themed up so
+     active/pressed pills actually read on dusk surfaces. */
+  --rds-accent-wash:   rgba(216, 145, 138, 0.22);
+  --rds-scrim: rgba(16, 18, 24, 0.44);
+
+  /* Categorical accents + status — dusk re-states the dark-tuned values it
+     used to inherit while nested under [data-theme="dark"]. */
+  --accent-slate:  #767C88;
+  --accent-purple: #9079A0;
+  --accent-blue:   #6E8CB5;
+  --accent-sage:   #779471;
+  --accent-amber:  #B58C3E;
+  --accent-coral:  #C77F76;
+
+  --rds-status-positive: #9DB89A;
+  --rds-status-caution:  #D8B45E;
+
+  /* Danger + the one shadow — dusk-tuned. */
+  --danger:     #D67A6E;
+  --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.40);
+}
+
+/* ---------- ALT · Lamplit Umber (opt-in) ----------
+   Optional alternate dark palette; not a focus (app tier ships dusk + dark only). */
+[data-theme="dark"][data-dark="lamplit-umber"] {
+  --rds-surface:      #2B2620;
+  --rds-surface-card: #36312B;
+  --rds-surface-rail: #211D18;
+  --rds-surface-tint: #292E38;
+
+  --rds-line:        #423D36;
+  --rds-line-light:  #38332D;
+  --rds-line-strong: #524C44;
+
+  --rds-ink:    #EFE7D4;
+  --rds-ink-2:  #E2DAC6;
+  --rds-ink-3:  #D7CFBB;
+  --rds-ink-4:  #B5AC97;
+  --rds-ink-5:  #786F5E;
+  --rds-text:             #D7CFBB;
+  --rds-text-muted:       #B5AC97;
+  --rds-text-faint:       #8C8472;
+  --rds-text-placeholder: #5C5648;
+
+  --rds-accent:        #D08A7F;
+  --rds-accent-strong: #BC7367;
+  --rds-accent-mark:   #D89A8D;
+  --rds-scrim: rgba(10, 8, 6, 0.48);
+
+  /* The one shadow — lamplit keeps its own lighter alpha; --danger inherits dark's #D67A6E, per its design. */
+  --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.40);
+}

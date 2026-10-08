@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # Keep the full interpreter matrix on Linux; smoke the oldest and
+        # newest on the OSs where behavior actually diverges (console
+        # encoding, path separators, fs semantics).
+        exclude:
+          - os: windows-latest
+            python-version: "3.11"
+          - os: windows-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.11"
+          - os: macos-latest
+            python-version: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package
+        run: pip install .
+      - name: Syntax-warning gate (force fresh compile — install already byte-compiled)
+        run: |
+          python -W error -c "import compileall,sys; sys.exit(0 if compileall.compile_dir('src', quiet=1, force=True) else 1)"
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Lint
+        run: |
+          pip install "ruff>=0.6,<0.15"
+          ruff check src tests
+      - name: Type check
+        run: |
+          npm install -g pyright
+          pyright src
+
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist + wheel
+        run: pip install build && python -m build
+      - name: Verify shipped assets and licenses
+        run: |
+          python - <<'EOF'
+          import zipfile, glob
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          required = [
+              "mdreview/assets/ds/design-app/tokens.css",
+              "mdreview/assets/ds/themes.css",
+              "mdreview/assets/ds/components/components.css",
+              "mdreview/assets/ds/fonts/AtkinsonHyperlegibleNext-VariableFont_wght.ttf",
+              "mdreview/assets/ds/fonts/JetBrainsMono-latin.woff2",
+              "mdreview/assets/ds/fonts/OFL-AtkinsonHyperlegibleNext.txt",
+              "mdreview/assets/ds/fonts/OFL-JetBrainsMono.txt",
+          ]
+          missing = [r for r in required if r not in names]
+          assert not missing, f"wheel is missing: {missing}"
+          print(f"wheel asset check OK ({len(names)} entries)")
+          EOF
+      - name: Install wheel and smoke-test CLI
+        run: |
+          pip install dist/*.whl
+          md-review --version
+          python -c "import mdreview; print(mdreview.__version__)"

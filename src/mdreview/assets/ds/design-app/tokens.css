@@ -1,0 +1,614 @@
+@import url('../themes.css'); /* canonical --rds-* color palette + dusk/dark — so linking this tier file directly still resolves color */
+/* ============================================================
+   Design system — app tier
+   Tokens for the typing/reviewing surface.
+   Tuned for density, restraint, and reveal-on-demand.
+
+   Drop into any HTML artifact via:
+     <link rel="stylesheet" href="path/to/design-app/tokens.css">
+
+   This file is a self-contained density tier: warm paper,
+   one coral, no shadows, with numeric values tuned to a dense
+   product surface.
+   ============================================================ */
+
+/* ---------- Fonts (all bundled locally; no CDN) ---------- */
+/* Sans — Atkinson Hyperlegible Next, served from local files (VARIABLE: one file
+   per style carries the full wght axis 200–800, so any weight renders precisely).
+   Mono — JetBrains Mono, now also local variable woff2 (was Google Fonts). */
+@font-face { font-family: 'Atkinson Hyperlegible Next'; src: url('../fonts/AtkinsonHyperlegibleNext-VariableFont_wght.ttf') format('truetype'); font-weight: 200 800; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Atkinson Hyperlegible Next'; src: url('../fonts/AtkinsonHyperlegibleNext-Italic-VariableFont_wght.ttf') format('truetype'); font-weight: 200 800; font-style: italic; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('../fonts/JetBrainsMono-latin-ext.woff2') format('woff2'); font-weight: 400 700; font-style: normal; font-display: swap; unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'JetBrains Mono'; src: url('../fonts/JetBrainsMono-latin.woff2') format('woff2'); font-weight: 400 700; font-style: normal; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'JetBrains Mono'; src: url('../fonts/JetBrainsMono-Italic-latin-ext.woff2') format('woff2'); font-weight: 400 500; font-style: italic; font-display: swap; unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'JetBrains Mono'; src: url('../fonts/JetBrainsMono-Italic-latin.woff2') format('woff2'); font-weight: 400 500; font-style: italic; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+:root {
+  /* ----- Color: shared palette -----
+     Paper/ink values resolve to the canonical palette in themes.css.
+     Card lifts UP from base (lighter), rail recesses DOWN (darker). */
+
+  /* Half-step surfaces (--rds-surface-rail-soft / --rds-surface-card-soft) and
+     the ONE blessed muted coral (--rds-accent-muted) are DERIVED tokens: they
+     are declared — with their rationale — in themes.css (color-mixes of the
+     canonical tokens, so they re-theme automatically). This tier does not
+     re-declare them; it only consumes them. */
+
+  /* ----- Pastel set — for desktop app surfaces -----
+     A muted, warm-cream-friendly pastel palette for kind tags, status pills,
+     scope chips, agent message kinds, etc. Every hue has three tokens:
+       *-wash : muted pastel fill (sits comfortably on paper)
+       *-mark : same-hue darker text/icon color, reads on the wash
+       *-edge : faint tint for borders when the wash needs definition
+     The dense app needs these.
+
+     Pick by semantic role, not vibe. The defaults below are suggestions:
+       confirm  → live, saved, in sync
+       caution  → pending, in progress, needs review
+       danger   → destructive, deleted, error
+       info     → neutral signal, system messages
+       cite     → references, citations, agent memory
+       focus    → current scope, "you are here"
+       quote    → quotations, captured snippets, "they said" content */
+
+  /* sage — confirm */
+  --confirm:        #6E8B6E;
+  --confirm-mark:   #4D6B4F;
+  --confirm-wash:   #E6EDE0;
+  --confirm-edge:   #CFDCC6;
+
+  /* amber — caution */
+  --caution:        #B58A4D;
+  --caution-mark:   #8A6232;
+  --caution-wash:   #F1E8D2;
+  --caution-edge:   #E0D2B0;
+
+  /* clay — danger / destructive (warmer than coral so it doesn't compete).
+     The BASE --danger is unified in themes.css (same #B26658); the pastel family below stays app-local. */
+  --danger-mark:    #8A4538;
+  --danger-wash:    #F0DDD5;
+  --danger-edge:    #DDC5B8;
+
+  /* slate — info / neutral signal */
+  --info:           #6F8290;
+  --info-mark:      #4F6270;
+  --info-wash:      #E0E6EA;
+  --info-edge:      #C7D0D6;
+
+  /* lilac — cite / references / agent memory */
+  --cite:           #8B7BA0;
+  --cite-mark:      #645480;
+  --cite-wash:      #E8E2EE;
+  --cite-edge:      #D2C8DC;
+
+  /* dusk-blue — focus / current scope ("you are here") */
+  --focus:          #7892A8;
+  --focus-mark:     #506E88;
+  --focus-wash:     #DEE6EC;
+  --focus-edge:     #C2CFD8;
+
+  /* wheat — quote / captured snippets / "they said" */
+  --quote:          #A8946A;
+  --quote-mark:     #7A6840;
+  --quote-wash:     #ECE3CC;
+  --quote-edge:     #DACEAE;
+
+  /* ----- Type scale (5 sizes — no in-betweens) ----- */
+  --type-canvas:  14px; /* note body, primary editor */
+  --type-body:    13px; /* default UI text, agent messages */
+  --type-rail:    12px; /* sidebars, dock content */
+  --type-meta:    10px; /* metadata, kind-tags, chips, counts, citations — quiet */
+  --type-eyebrow: 10px; /* section labels (uppercase, tracked) */
+
+  /* Line heights */
+  --lh-canvas: 1.5; /* @kind other */
+  --lh-body:   1.5; /* @kind other */
+  --lh-rail:   1.45; /* @kind other */
+
+  /* Letter-spacing */
+  --track-sans:    -0.01em;
+  --track-mono:    -0.02em;
+  --track-eyebrow:  0.06em;
+
+  /* Mono is currently applied ONLY to code listings (<pre>/<code>) and
+     keyboard keys (<kbd>). It is NOT used as decoration anywhere — no mono
+     eyebrows, kind-tags, labels, counts, captions, or status lines.
+     Reintroduce in new select areas deliberately. Inline mono in prose is
+     shrunk so its wider glyphs don't out-weigh the sans. */
+  --mono-inline-scale: 0.92; /* @kind other */
+
+  /* Weights — body 460, emphasis 600 (700 only for numeric callouts).
+     Atkinson Hyperlegible Next is now bundled as a VARIABLE font (@font-face
+     above pins the wght axis 200–800), so any axis value renders precisely — no
+     snapping. Body is a true 460, the mid-weight the design specifies.
+     If you ever revert to per-weight
+     static cuts, 460 snaps to 500 and the axis is lost — keep @font-face variable. */
+  --weight:        460;
+  --weight-strong: 600;
+  --weight-num:    700;
+
+  /* ----- Spacing (6 stops — geometric). --space-5 is defined so the
+         shared bodies' --space-5 refs (e.g. .rds-callout) resolve here too. ----- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* ----- Row & control heights ----- */
+  --row-tight: 24px; /* sidebar items, breadcrumb, chip rows */
+  --row:       28px; /* default — the spine of the system */
+  --row-loose: 32px; /* top-level controls, primary CTA */
+  --chrome:    30px; /* title bars, tab strips */
+
+  /* ----- Radius — softened so nothing reads as a hard terminal box ----- */
+  --radius-sharp: 6px;   /* small controls, inputs */
+  --radius:       9px;   /* buttons */
+  --radius-card:  12px;  /* cards, sections, panels */
+  --radius-chip:  7px;   /* textual tag/label chips — softened, NOT full-round */
+  --radius-pill:  999px; /* TRUE pills only: toggle tracks, status dots, segmented controls */
+
+  /* ----- Canonical density radii — APP density provides its values. Shared bodies
+         reference --rds-radius-* and resolve per density context. ----- */
+  --rds-radius-sm:  6px;  /* ≈ --radius-sharp (small marks, checkboxes) */
+  --rds-radius-md:  9px;  /* ≈ --radius (the ctl scale: buttons/inputs/selects) */
+  --rds-radius-lg: 16px;  /* window frames, modals (was bare --radius-lg) */
+
+  /* ----- Elevation ----- */
+  /* Default state has NO shadow. Hover uses background-tint, not shadow.
+     Modals and dropdowns get exactly one shadow. That's it.
+     --shadow-pop is unified in themes.css (same warm light value,
+     plus tuned dark alphas). */
+
+  /* ----- Motion ----- */
+  --ease:       cubic-bezier(0.22, 0.61, 0.36, 1); /* @kind other */
+  --dur-quick:  90ms; /* @kind other */
+  --dur:        180ms; /* @kind other */
+  --dur-stage:  320ms; /* @kind other */
+
+  /* ----- Disclosure dwell timing ----- */
+  /* Hover-to-open dwell + close-grace for the "pin the content under the cursor
+     through reflow" motion pattern. These are
+     TUNED values, not arbitrary: --dwell-open is long enough that pure scanning
+     doesn't trip an open; --dwell-close-grace lets the pointer cross the
+     row→gutter gap without the disclosure snapping shut; --mark-clear-grace is
+     the smart-comment mark's linger after the pointer leaves. Name them so a
+     surface stops re-deriving magic numbers. */
+  --dwell-open:         300ms; /* @kind other */
+  --dwell-close-grace:  410ms; /* @kind other */
+  --mark-clear-grace:   200ms; /* @kind other */
+
+  /* ----- Type stacks — canonical stacks live in themes.css as --rds-font-*
+         ; the legacy aliases (--sans/--mono) are retired —
+         every reference reads the canonical names directly. ----- */
+}
+
+/* ---------- Themed pastel-signal overrides ----------
+   The pastel "kind" set above is tuned for warm PAPER. On the dark themes the
+   solid signal hues (used bare as dots/rules, e.g. the live dot) go muddy and
+   too subtle against the darker surfaces, so lift the ones used as standalone
+   marks to their dark-tuned sage/amber (matches --rds-status-* in themes.css). The -wash/-mark/-edge trio is left alone — it's paper-only. */
+[data-theme="dark"],
+[data-theme="dusk"] {
+  --confirm: #9DB89A; /* live / saved — brighter sage so the dot reads on dark */
+  --caution: #D8B45E; /* pending — matched lift */
+}
+
+/* ---------- Base reset ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+
+/* text-size-adjust:100% switches OFF mobile text-autosizing — a SEPARATE thing
+   from the font-size floor described next. Keep it, but know its limits:
+
+   A user who sets a non-default BROWSER font size (Edge/Chrome → Appearance →
+   Font size) imposes a MINIMUM font-size: every size at/below it renders AT the
+   floor, and NOTHING in author CSS removes it — verified live, immune to
+   !important, text-size-adjust:none, AND <meta viewport>. At the default setting
+   there is NO floor and small px render true (the common case). So do NOT fight it
+   with zoom/transform hacks (that pins metadata to a fixed px and breaks the
+   no-floor case). Size metadata honestly with small px and let hierarchy lean on
+   size + weight + colour, which degrade gracefully if a floor flattens them. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+html, body {
+  margin: 0;
+  background: var(--rds-surface);
+  color: var(--rds-ink);
+  font-family: var(--rds-font-sans);
+  font-size: var(--type-body);
+  font-weight: var(--weight);
+  line-height: var(--lh-body);
+  letter-spacing: var(--track-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Inline mono in prose: shrink to 0.92em to balance optical weight against
+   sans. <code>/<kbd> always; .mono only when it's a child of a text element
+   AND has no explicit font-size (so standalone .mono in table cells / demos
+   keeps its set size, no compounding). */
+code, kbd, samp, pre {
+  font-family: var(--rds-font-mono);
+  font-size: calc(1em * var(--mono-inline-scale));
+  letter-spacing: var(--track-mono);
+}
+.mono {
+  font-family: var(--rds-font-mono);
+  letter-spacing: var(--track-mono);
+}
+p .mono:not([style*="font-size"]),
+h1 .mono:not([style*="font-size"]),
+h2 .mono:not([style*="font-size"]),
+h3 .mono:not([style*="font-size"]),
+h4 .mono:not([style*="font-size"]),
+li .mono:not([style*="font-size"]),
+.note .mono:not([style*="font-size"]),
+.preview-lede .mono:not([style*="font-size"]) {
+  font-size: calc(1em * var(--mono-inline-scale));
+}
+
+/* ---------- Type primitives ---------- */
+.t-canvas  { font-size: var(--type-canvas);  line-height: var(--lh-canvas); }
+.t-body    { font-size: var(--type-body);    line-height: var(--lh-body); }
+.t-rail    { font-size: var(--type-rail);    line-height: var(--lh-rail); }
+.t-meta    { font-size: var(--type-meta);    line-height: var(--lh-rail); color: var(--rds-ink-4); }
+.t-eyebrow {
+  font-size: var(--type-eyebrow);
+  font-weight: var(--weight-strong);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--rds-ink-5);
+  line-height: var(--lh-rail);
+}
+
+.t-strong { font-weight: var(--weight-strong); }
+.t-num {
+  font-family: var(--rds-font-sans);
+  font-feature-settings: "tnum" 1;
+  font-weight: var(--weight-num);
+  letter-spacing: var(--track-sans);
+}
+
+/* Ink ramps */
+.ink   { color: var(--rds-ink); }
+.ink-2 { color: var(--rds-ink-2); }
+.ink-3 { color: var(--rds-ink-4); }
+.ink-4 { color: var(--rds-ink-5); }
+
+/* ============================================================
+   THE BARE (unprefixed) UTILITY LAYER BELOW
+   ------------------------------------------------------------
+   The bare utilities that follow (.row, .btn, .chip, .dot, .kind, .input,
+   .progress, .band, .sec-bar, .app-shell, .frame, .editor, .caret, .dock,
+   .rule, .t-*, …) are the raw building blocks for hand-rolled preview /
+   spec surfaces. Product surfaces consume the prefixed `rds-*` components
+   instead; do not ship these bare classes in product code.
+   ============================================================ */
+
+/* ---------- The row (atom of the system) ---------- */
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--row);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sharp);
+  font-size: var(--type-body);
+  color: var(--rds-ink);
+  cursor: default;
+  transition: background var(--dur-quick) var(--ease);
+}
+.row:hover { background: var(--rds-surface-card); }
+.row.is-tight { height: var(--row-tight); font-size: var(--type-rail); }
+.row.is-loose { height: var(--row-loose); }
+
+.row > .row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.row > .row-meta {
+  flex: 0 0 auto;
+  font-family: var(--rds-font-sans);
+  font-size: var(--type-meta);
+  font-weight: 400;
+  color: var(--rds-ink-5);
+}
+.row > .row-accessory {
+  flex: 0 0 auto;
+  color: var(--rds-ink-5);
+  opacity: 0;
+  transition: opacity var(--dur-quick) var(--ease);
+}
+.row:hover > .row-accessory,
+.row:focus-within > .row-accessory { opacity: 1; }
+
+/* ---------- The kind-tag (short sans lowercase label, replaces icons) ----------
+   Classifies a row; must never out-shout the row's title. Sans, quiet (ink-4),
+   no box. NOT mono — mono here was the system's loudest "terminal" tell. */
+.kind {
+  font-family: var(--rds-font-sans);
+  font-size: var(--type-meta);
+  letter-spacing: var(--track-sans);
+  font-weight: 400;
+  color: var(--rds-ink-5);
+  text-transform: lowercase;
+  flex: 0 0 auto;
+  display: inline-block;
+  min-width: 30px;
+}
+
+/* ---------- The chip (scope, context, tag) ----------
+   A chip is metadata for the thing in the row, never the focus. Tonal:
+   the text is a darker hue of the chip's own background, never near-black.
+   Default neutral chip uses paper-rail + ink-3 (matches the same-hue pattern
+   the pastels use).
+
+   IMPORTANT — vertical size comes from PADDING, never a fixed height. Browsers
+   with a minimum-font-size setting floor small text UP (e.g. an 11px chip label
+   renders at 16–20px), so a fixed-height chip crams that floored text with no
+   breathing room. Padding lets the chip grow with whatever the text actually
+   renders at. Same rule for .conf, .kt, status pills — anything wrapping text. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 4px 9px;
+  background: var(--rds-surface-card);
+  border: 1px solid var(--rds-line);
+  border-radius: var(--radius-chip);
+  font-size: var(--type-meta);
+  font-weight: 400;
+  color: var(--rds-ink-4);
+  letter-spacing: 0;
+  line-height: 1;
+}
+.chip.is-hot {
+  background: var(--rds-accent-wash);
+  border-color: transparent;
+  color: var(--rds-accent-strong);
+}
+
+/* ---------- The dot (smallest signal) ----------
+   Floored at 8px so the hue actually reads as a status — same logic StatusDot
+   enforces at its own (larger) floor. Below this a colored dot is just a speck. */
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--rds-ink-5);
+  flex: 0 0 auto;
+}
+.dot.is-live    { background: var(--confirm); animation: pm-pulse 1.6s var(--ease) infinite; }
+.dot.is-pending { background: var(--caution); }
+.dot.is-hot     { background: var(--rds-accent); }
+
+@keyframes pm-pulse {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.85); }
+}
+
+/* ---------- Buttons ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--row);
+  padding: 0 var(--space-3);
+  font-family: var(--rds-font-sans);
+  font-size: var(--type-body);
+  font-weight: var(--weight-strong);
+  letter-spacing: var(--track-sans);
+  color: var(--rds-ink);
+  background: var(--rds-surface-card);
+  border: 1px solid var(--rds-line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background var(--dur-quick) var(--ease), border-color var(--dur-quick) var(--ease);
+}
+.btn:hover { background: var(--rds-surface-rail); border-color: var(--rds-line-strong); }
+/* App-tier primary = SOFT ACCENT, not dark ink. A dark-ink button reads as a
+   hard black/white control that fights the warm-paper surface; the soft-accent
+   wash → solid-coral-on-hover keeps the button quiet at rest and coral when
+   engaged, consistent with the rest of the tier. */
+.btn.is-primary {
+  height: var(--row-loose);
+  background: var(--rds-accent-wash);
+  color: var(--rds-accent-strong);
+  border-color: transparent;
+}
+.btn.is-primary:hover { background: var(--rds-accent); color: #fff; border-color: var(--rds-accent); }
+.btn.is-ghost { background: transparent; border-color: transparent; color: var(--rds-ink-2); }
+.btn.is-ghost:hover { background: var(--rds-surface-card); color: var(--rds-ink); }
+
+/* ---------- Inputs ---------- */
+.input {
+  height: var(--row-loose);
+  padding: 0 var(--space-3);
+  background: var(--rds-surface);
+  border: 1px solid var(--rds-line);
+  border-radius: var(--radius-sharp);
+  font-family: var(--rds-font-sans);
+  font-size: var(--type-body);
+  font-weight: var(--weight);
+  color: var(--rds-ink);
+  letter-spacing: var(--track-sans);
+  outline: none;
+  transition: border-color var(--dur-quick) var(--ease);
+  width: 100%;
+}
+.input::placeholder { color: var(--rds-ink-5); }
+.input:focus { border-color: var(--rds-ink-4); }
+
+/* ---------- Window frame ---------- */
+.frame {
+  background: var(--rds-surface);
+  border: 1px solid var(--rds-line);
+  border-radius: var(--rds-radius-lg);
+  overflow: hidden;
+}
+.frame-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--chrome);
+  padding: 0 var(--space-3);
+  background: var(--rds-surface-card);
+  border-bottom: 1px solid var(--rds-line);
+  font-size: var(--type-meta);
+  color: var(--rds-ink-4);
+}
+.frame-title .traffic {
+  display: inline-flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.frame-title .traffic span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--rds-line-strong);
+}
+.frame-title .title {
+  font-weight: var(--weight-strong);
+  color: var(--rds-ink-4);
+}
+.frame-title .vsep {
+  width: 1px;
+  height: 11px;
+  background: var(--rds-line-strong);
+}
+.frame-title .scope {
+  font-weight: 500;
+  color: var(--rds-ink-4);
+}
+.frame-title .right {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--rds-ink-5);
+}
+
+/* ---------- Editor surface ---------- */
+.editor {
+  font-size: var(--type-canvas);
+  line-height: var(--lh-canvas);
+  color: var(--rds-ink);
+  max-width: 640px;
+  margin: 0 auto;
+  padding: var(--space-6);
+}
+.editor p { margin: 0 0 var(--space-3); }
+.editor ::selection {
+  background: var(--rds-accent-wash);
+  color: var(--rds-accent-strong);
+}
+
+/* The caret IS the accent. */
+.caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 1.1em;
+  background: var(--rds-accent);
+  vertical-align: text-bottom;
+  animation: pm-caret 1.06s steps(2, start) infinite;
+}
+@keyframes pm-caret { to { visibility: hidden; } }
+
+/* ---------- Agent dock ---------- */
+.dock {
+  width: 340px;
+  background: var(--rds-surface-card);
+  border-left: 1px solid var(--rds-line);
+  display: flex;
+  flex-direction: column;
+}
+.dock-msg {
+  font-size: var(--type-rail);
+  line-height: var(--lh-rail);
+  max-width: 88%;
+  padding: var(--space-2) 0;
+}
+.dock-msg.from-agent {
+  border-left: 2px solid var(--rds-ink-5);
+  padding-left: var(--space-3);
+  color: var(--rds-ink-2);
+  margin-right: auto;
+}
+.dock-msg.from-you {
+  background: var(--rds-surface);
+  border: 1px solid var(--rds-line-strong);
+  border-radius: 8px 8px 2px 8px;
+  padding: var(--space-2) var(--space-3);
+  margin-left: auto;
+  color: var(--rds-ink);
+}
+.dock-msg .progress {
+  font-family: var(--rds-font-sans);
+  font-size: 10px;
+  color: var(--rds-ink-4);
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+/* ---------- Section rule (compressed — desktop has less air) ---------- */
+.rule {
+  border: 0;
+  height: 1px;
+  background: var(--rds-line);
+  margin: var(--space-4) 0;
+}
+
+/* ---------- Section sub-header bar (quiet structural mark) ----------
+   A thin MUTED-coral vertical bar to the left of a section sub-header / eyebrow
+   — a quiet "a title lives here" anchor. Uses --rds-accent-muted so it reads as
+   coral-family (brand tie) but never spends the loud accent. Taller than cap
+   height + thin (2.25px) so it never reads as a capital "I". */
+.sec-bar { position: relative; padding-left: 9px; }
+.sec-bar::before {
+  content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 2.25px; height: 1.85em; border-radius: 1px;
+  background: var(--rds-accent-muted);
+}
+
+/* ---------- Faded-edge section band ----------
+   The system's "faded-edge divider, never a solid full-width hairline" rule as
+   a reusable banding atom: a top rule that fades to transparent at both ends.
+   Reads a flat section/list as its own band WITHOUT boxing it in a card.
+   .band = strong tone (between sections); .band.is-light = divide rows within
+   a flat list. Pairs with the flat-surface / lifted-signal pattern. */
+.band { position: relative; margin-top: var(--space-6); padding-top: var(--space-6); }
+.band::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--rds-line-strong) 14%, var(--rds-line-strong) 86%, transparent);
+}
+.band.is-light::before {
+  background: linear-gradient(90deg, transparent, var(--rds-line) 12%, var(--rds-line) 88%, transparent);
+}
+
+/* ---------- AppShell — anchored 3-pane application layout ----------
+   The first application-layout primitive. Left rail (nav/activity) · centered
+   content column · right rail (related/companion). ONE shared grid so the
+   content column never moves between screens. Screens with no right rail still
+   RESERVE the right column (leave it empty) so the body stays pinned — drilling
+   between views slides the rail in/out instead of teleporting the content.
+   Give the PARENT `overflow-x: auto` so below min-width the rails are scrolled
+   to, never crushed. */
+.app-shell {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr) 288px;
+  min-width: 1080px;
+}
+@media (max-width: 1320px) {
+  .app-shell { grid-template-columns: 224px minmax(0, 1fr) 256px; }
+}

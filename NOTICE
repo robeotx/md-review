@@ -1,0 +1,42 @@
+# Vendored assets
+
+`src/mdreview/assets/ds/` contains a read-only snapshot of a design
+system, copied 2026-07-31:
+
+- `design-app/tokens.css` — design tokens + `@font-face` declarations
+- `themes.css` — canonical themed color palette (imported by tokens.css)
+- `components/components.css` — component styles (comment popover, inbox,
+  badges, icons; all icons are inline data-URI SVG)
+- `fonts/` — the six font files referenced by `tokens.css` (below), plus
+  their license texts
+
+## Font licenses
+
+Both families are licensed under the **SIL Open Font License, Version 1.1**.
+Per OFL condition 2, each family's full license text and copyright notice
+ships alongside the binaries:
+
+| files | family | license file |
+|---|---|---|
+| `AtkinsonHyperlegibleNext-*VariableFont_wght.ttf` | Atkinson Hyperlegible Next (variable) | `fonts/OFL-AtkinsonHyperlegibleNext.txt` |
+| `JetBrainsMono-*.woff2` | JetBrains Mono | `fonts/OFL-JetBrainsMono.txt` |
+
+Copyright notices were extracted from the binaries' own name tables
+(2026-07-31):
+
+- Atkinson Hyperlegible Next: "Copyright 2020-2024 The Atkinson Hyperlegible
+  Next Project Authors" — upstream:
+  https://github.com/googlefonts/atkinson-hyperlegible-next
+- JetBrains Mono: "Copyright 2020 The JetBrains Mono Project Authors" —
+  upstream: https://github.com/JetBrains/JetBrainsMono
+
+Neither family declares a Reserved Font Name.
+
+## Serving and overriding
+
+These assets are served read-only by `md-review serve` at `/ds/...` (the
+`.txt` license files are NOT web-served — the ds route is suffix-restricted
+to css/fonts/svg). To develop against a live design-system checkout instead
+of the snapshot, pass `--ds-dir /path/to/design-system` (or set
+`MD_REVIEW_DS_DIR`). Note that `--ds-dir` content is served same-origin:
+only point it at checkouts you trust as active web content.

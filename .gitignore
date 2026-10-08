@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.tmp/
+.playwright-mcp/
+.reviews/
+.requests/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
