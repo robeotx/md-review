@@ -34,6 +34,7 @@ import json
 import os
 import posixpath
 import re
+import sys
 import threading
 import uuid
 from collections.abc import Iterator
@@ -41,11 +42,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
-
-try:
-    import fcntl
-except ImportError:  # Windows
-    fcntl = None
 
 from . import links
 from .provenance import collect_provenance, normalize_provenance
@@ -62,18 +58,22 @@ def _store_file_lock(data_dir: Path) -> Iterator[None]:
     """Cross-PROCESS render lock. The server and a local ``md-review render``
     routinely share one store, and a render's blob cleanup must never run
     against another process's newer render of the same doc (it would delete
-    files the current links.json references). POSIX flock; a no-op where
-    fcntl does not exist (Windows), where cross-process renders stay
-    best-effort as before."""
-    if fcntl is None:
+    files the current links.json references). POSIX flock; a no-op on
+    Windows (no fcntl), where cross-process renders stay best-effort."""
+    # A sys.platform check (not try/except ImportError) so type checkers
+    # targeting Windows see the fcntl use below as unreachable there.
+    if sys.platform == "win32":
         yield
         return
+    import fcntl
+
     with (data_dir / ".render.lock").open("a") as fh:
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
         try:
             yield
         finally:
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
 
 # A doc id is a slug plus a short content hash of the document's identity;
 # only these characters ever appear, which is what makes the URL routes and

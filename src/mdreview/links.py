@@ -190,7 +190,8 @@ def capture_file(path: Path, boundary: Path, identity: str) -> bytes:
     return data
 
 
-_FILE_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)  # absent on Windows, where _CAN_WALK is False anyway
+_FILE_FLAGS = os.O_RDONLY | _NOFOLLOW | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
 _CAN_WALK = os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY")
 # O_PATH (Linux) / O_SEARCH (where Python exposes it) open a directory for
 # traversal with search (x) permission alone, matching what a plain open() of
@@ -215,7 +216,7 @@ def _open_without_symlinks(resolved: Path) -> int:
     dir_fd = os.open(resolved.anchor, _DIR_FLAGS)
     try:
         for part in parts[:-1]:
-            next_fd = os.open(part, _DIR_FLAGS | os.O_NOFOLLOW, dir_fd=dir_fd)
+            next_fd = os.open(part, _DIR_FLAGS | _NOFOLLOW, dir_fd=dir_fd)
             os.close(dir_fd)
             dir_fd = next_fd
         return os.open(parts[-1], _FILE_FLAGS, dir_fd=dir_fd)
