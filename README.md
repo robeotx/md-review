@@ -68,7 +68,9 @@ md-review render design.md ──► <data-dir>/rendered/design-<hash>/
                                  ├── index.html      ← the review page
                                  ├── manifest.json   ← title, provenance, times
                                  ├── anchors.json    ← every commentable element
-                                 └── comments.json   ← the comment channel
+                                 ├── comments.json   ← the comment channel
+                                 ├── links.json      ← where each relative link points
+                                 └── files/          ← linked files captured at render
 
 md-review serve ──► review pages + JSON API, LAN-only
 ```
@@ -87,6 +89,30 @@ md-review render design.md --server http://md-review.local:8779
 
 Provenance is collected on the machine where the document lives and shipped
 with the render.
+
+### Relative links
+
+Links written relative to the source file (`[report](reports/run.md)`,
+`![chart](img/chart.png)`) work on the rendered page:
+
+- **A linked doc that is published** opens its review page, `#section`
+  included. This is decided when the link is clicked, so a doc published
+  later still works.
+- **A linked file that isn't published** opens a read-only copy captured at
+  render time (Markdown and text are shown as plain text; images display
+  inline). Re-render to refresh the copy.
+- **A target that can't be shown** is marked ⊘ on the page; clicking it says
+  why (outside the repo, too large, binary, or looks like a credential).
+
+Capture happens on the machine where the document lives, including with
+`--server`; the server never reads files from its own disk. `render` prints
+what it captured and what it skipped to stderr. Credential-like files
+(`.env`, keys, `.aws/`, `.ssh/`, `.kube/`, token-shaped contents, …) are
+never captured; pass `--no-capture` to capture nothing. Limits: 2 MiB per
+file, 8 MiB per document, 500 targets, 2 GiB across the store.
+
+GitHub-style heading fragments (`#install`) resolve too, within a doc and
+across docs.
 
 ### Commenting
 
@@ -191,7 +217,8 @@ other's updates.
 | `/` | GET | document index (HTML) |
 | `/health` | GET | liveness, version, doc count |
 | `/api/docs` | GET | all manifests + comment counts |
-| `/api/render` | POST | render `{markdown, sourcePath, title?, provenance?}` |
+| `/api/render` | POST | render `{markdown, sourcePath, title?, provenance?, links?}` (`links`: `{files: {path: base64}, reasons: {path: why}}` or `{disabled: true}`) |
+| `/link/<doc-id>/<key>` | GET | follow a relative link: redirect to a published doc, show a captured copy (`?raw=1` for raw text), or explain why it's unavailable |
 | `/comments?doc=<id>` | GET | comment array for one doc |
 | `/comments` | POST | append `{docId, anchor, text, quote?, author?}` |
 | `/comments/resolve` | POST | `{docId, id, resolved}` |
@@ -206,10 +233,11 @@ created_at, resolved}`.
 ATX headings, paragraphs, fenced code, blockquotes, ordered/unordered lists
 (including loose lists and wrapped continuations), GFM tables (with
 `\|`-escaped and code-span pipes), horizontal rules; inline `**bold**`,
-`*italic*`, `` `code` ``, `[links](...)`. Known edges: no setext headings,
-nested lists flatten, images render as `!`-prefixed links, `)` truncates
-link URLs, no autolink/strikethrough/task lists, non-allowlisted link
-schemes render inert.
+`*italic*`, `` `code` ``, `[links](...)`, and relative `![images](...)`
+(see [Relative links](#relative-links)). Known edges: no setext headings,
+nested lists flatten, external images render as `!`-prefixed links (the page
+loads no third-party content), `)` truncates link URLs, no
+autolink/strikethrough/task lists, non-allowlisted link schemes render inert.
 
 ## Running as a service
 

@@ -4,6 +4,35 @@ All notable changes to md-review. Format loosely follows Keep a Changelog;
 the project is pre-1.0, so minor bumps may include breaking changes (each
 called out explicitly).
 
+## [0.5.0] — 2026-10-07
+
+### Added
+
+- **Relative links work on rendered pages.** A rendered page lives at
+  `/rendered/<doc-id>/`, so every repo-relative link used to 404. Links and
+  images are now resolved against the source file. Published docs open their
+  review page, decided at click time so later publishes count.
+  Unpublished files open a read-only copy captured at render time.
+  Targets that can't be shown are marked ⊘ and explain why. Served through
+  the new `GET /link/<doc-id>/<key>`.
+- **Publish-time capture.** `md-review render` (local or `--server`) copies
+  linked files on the publishing machine and prints what it captured and
+  skipped to stderr. Credential-like paths and contents are never captured.
+  New `--no-capture` flag. Limits: 2 MiB per file, 8 MiB per document,
+  500 targets, and a 2 GiB store-wide quota that degrades to "unavailable"
+  rather than failing the render.
+- **Relative images render inline** when captured (SVG is served sandboxed).
+- **GitHub-style `#fragments` resolve.** Heading ids slug the whole heading
+  path, so `#install` used to miss. Each heading now also carries its
+  GitHub-style slug, and the page falls back to it.
+
+### Changed
+
+- `/api/render` accepts an optional `links` field and has its own 16 MiB
+  body cap. Every other route keeps 4 MiB. Only one render over 4 MiB runs at
+  a time; others get 503 before their body is read. Older clients that send
+  no `links` still get working links to published docs.
+
 ## [0.4.3] — 2026-08-17
 
 ### Fixed

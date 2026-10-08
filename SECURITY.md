@@ -34,6 +34,17 @@ bugs: no authentication or authorization, comments editable/resolvable by
 any LAN client, client-asserted provenance, and readability of every doc by
 every LAN client.
 
+**Linked files.** `md-review render` captures the files a document links to
+and stores them with the document, so every LAN client can read them too.
+Capture runs only on the publishing machine, under the publisher's own
+permissions. The server never reads files from its own filesystem to answer
+a link: provenance is client-asserted, so doing that would be arbitrary file
+read. Credential-like paths and contents are skipped, `render` prints
+everything it captured, and `--no-capture` turns capture off. The skip list
+is a safety net, not a guarantee; if a document links to something
+sensitive, render with `--no-capture`. A server-side read of a path outside
+the data directory via `/link` is a boundary escape. Report it as above.
+
 ## Supported versions
 
 Only the latest minor release receives security fixes.

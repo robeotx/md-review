@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "md-review"
-version = "0.4.3"
+version = "0.5.0"
 description = "LAN-only markdown review server: render markdown into commentable review pages and collect anchored comments from any device on your local network."
 readme = "README.md"
 requires-python = ">=3.10"
