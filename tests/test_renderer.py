@@ -510,5 +510,34 @@ class StructureFixTests(unittest.TestCase):
         self.assertIn("<ol", body)
 
 
+class FragmentTests(unittest.TestCase):
+    """Heading ids are slugs of the whole heading PATH (`guide-install`), but
+    authors write GitHub-style fragments (`#install`), which slug the heading's
+    own text. Each heading carries that GitHub slug as data-slug so the page can
+    resolve such fragments."""
+
+    def test_heading_carries_github_style_slug_of_its_own_text(self) -> None:
+        body = MarkdownRenderer().render("# Guide\n\n## Install & Run\n")
+        self.assertIn('id="guide-install-run"', body)
+        self.assertIn('data-slug="install--run"', body)
+
+    def test_github_slug_keeps_code_and_link_text(self) -> None:
+        from mdreview.renderer import github_slug
+
+        self.assertEqual("code-span", github_slug("`code` span"))
+        self.assertEqual("see-the-docs-now", github_slug("See [the docs](a.md) now"))
+
+    def test_duplicate_heading_slugs_get_github_numeric_suffixes(self) -> None:
+        body = MarkdownRenderer().render("# A\n\n## Notes\n\n# B\n\n## Notes\n")
+        self.assertIn('data-slug="notes"', body)
+        self.assertIn('data-slug="notes-1"', body)
+
+    def test_page_resolves_unmatched_fragment_via_data_slug(self) -> None:
+        html_out = page_html("T", "src.md", "doc-1", "<p>body</p>", [], [])
+        self.assertIn("function resolveFragment()", html_out)
+        self.assertIn("window.addEventListener('hashchange', resolveFragment)", html_out)
+        self.assertIn("document.querySelector('[data-slug=\"' + CSS.escape(slug) + '\"]')", html_out)
+
+
 if __name__ == "__main__":
     raise SystemExit(unittest.main())

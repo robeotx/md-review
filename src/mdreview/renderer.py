@@ -56,6 +56,14 @@ def slugify(text: str, fallback: str = "x") -> str:
     return slug or fallback
 
 
+def github_slug(text: str) -> str:
+    """GitHub-style heading slug of a heading's OWN text (link label kept,
+    punctuation dropped, each space a hyphen), so `## Install & Run` slugs to
+    `install--run` exactly as the fragment an author would write for it."""
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    return re.sub(r"[^\w\- ]", "", text.lower()).replace(" ", "-")
+
+
 def escape_attr(value: object) -> str:
     return html.escape(str(value), quote=True)
 
@@ -208,6 +216,7 @@ class MarkdownRenderer:
         self.ordinals: dict[str, int] = {}
         self.anchor_dupes: dict[str, int] = {}
         self.heading_slugs: dict[str, int] = {}
+        self.github_slugs: dict[str, int] = {}
         self.anchors: list[Anchor] = []
         self.toc: list[dict] = []
 
@@ -232,6 +241,13 @@ class MarkdownRenderer:
         base = slugify(" ".join(self.heading_path) or text, "section")
         self.heading_slugs[base] = self.heading_slugs.get(base, 0) + 1
         return base if self.heading_slugs[base] == 1 else f"{base}-{self.heading_slugs[base]}"
+
+    def github_heading_slug(self, text: str) -> str:
+        # GitHub numbers repeats from 1: notes, notes-1, notes-2.
+        base = github_slug(text)
+        seen = self.github_slugs.get(base, 0)
+        self.github_slugs[base] = seen + 1
+        return base if seen == 0 else f"{base}-{seen}"
 
     def render(self, markdown: str) -> str:
         # NUL is never legitimate in markdown and is actively dangerous here:
@@ -281,7 +297,8 @@ class MarkdownRenderer:
                 anchor = self.make_anchor("heading", text)
                 self.toc.append({"level": level, "id": hid, "text": text})
                 out.append(
-                    f'<h{level} id="{escape_attr(hid)}" class="md-heading md-block"{anchor.attrs()}>'
+                    f'<h{level} id="{escape_attr(hid)}" data-slug="{escape_attr(self.github_heading_slug(text))}" '
+                    f'class="md-heading md-block"{anchor.attrs()}>'
                     f'<a class="md-heading-link" href="#{escape_attr(hid)}">#</a>{render_inline(text)}</h{level}>'
                 )
                 i += 1
@@ -1491,6 +1508,20 @@ window.MD_REVIEW = {config_json};
       d.classList.add('open');
     }});
   }}
+
+  // Authors write GitHub-style fragments (#install), but heading ids here are
+  // heading-PATH slugs (guide-install). When the fragment names no element,
+  // fall back to the heading whose data-slug (its own-text slug) matches.
+  function resolveFragment() {{
+    let slug;
+    try {{ slug = decodeURIComponent(location.hash.slice(1)); }} catch (err) {{ return; }}
+    if (!slug || document.getElementById(slug)) return;
+    const el = document.querySelector('[data-slug="' + CSS.escape(slug) + '"]')
+      || document.querySelector('[data-slug="' + CSS.escape(slug.toLowerCase()) + '"]');
+    if (el) el.scrollIntoView();
+  }}
+  window.addEventListener('hashchange', resolveFragment);
+  resolveFragment();
 
   decorate();
   loadComments().catch((err) => {{
