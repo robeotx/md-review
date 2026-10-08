@@ -233,6 +233,7 @@ other's updates.
 | `/` | GET | document index (HTML) |
 | `/health` | GET | liveness, version, doc count |
 | `/api/docs` | GET | all manifests + comment counts |
+| `/api/search` | GET | search docs, standalone pages, captured text files and comments. Params: `q` (AND of substring terms), repeatable `repo`, `from`/`to` (UTC `YYYY-MM-DD`), `sort` = `modified` (default) or `created`, `limit`, `offset`. Results are grouped by doc; the index is in memory and syncs from the store |
 | `/api/render` | POST | render `{markdown, sourcePath, title?, provenance?, links?}` (`links`: `{files: {path: base64}, reasons: {path: why}}` or `{disabled: true}`) |
 | `/link/<doc-id>/<key>` | GET | follow a relative link: redirect to a published doc, show a captured copy (`?raw=1` for raw text), or explain why it's unavailable |
 | `/comments?doc=<id>` | GET | comment array for one doc |

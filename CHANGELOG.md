@@ -4,6 +4,22 @@ All notable changes to md-review. Format loosely follows Keep a Changelog;
 the project is pre-1.0, so minor bumps may include breaking changes (each
 called out explicitly).
 
+## [Unreleased]
+
+### Added
+
+- **Search on the index page.** A search box finds text across rendered
+  docs, standalone HTML pages in the store, captured text files and
+  comments. Sort by last modified (default) or created; filter by repo
+  (multi-select) and date range (UTC days). Results are grouped by doc, the
+  search state lives in the URL, and the type pill tints each file kind
+  (md, html, code, data, image, comment). Served by the new
+  `GET /api/search`. The index is in memory and built from the store on
+  start; it syncs at most every 2 s on the query path, so a fresh render can
+  take up to one sync to appear. Searching is substring-based (no stemming,
+  no OR or phrases); text past 2 MB per item is searchable up to that cap
+  and marked partial.
+
 ## [0.5.0] — 2026-10-07
 
 ### Added

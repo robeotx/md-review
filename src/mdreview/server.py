@@ -64,7 +64,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import __version__, links, store
+from . import __version__, links, search, search_ui, store
 from .provenance import normalize_provenance
 from .store import (
     DOC_ID_RE,
@@ -283,6 +283,7 @@ class ReviewServer(ThreadingHTTPServer):
         self.theme = theme
         self._connection_slots = threading.BoundedSemaphore(MAX_CONCURRENT_CONNECTIONS)
         self.large_render_slot = threading.BoundedSemaphore(1)
+        self.search_index = search.SearchIndex(data_dir)
 
     def verify_request(self, request, client_address) -> bool:
         # First and strongest gate: drop non-LAN peers before a single byte of
@@ -460,6 +461,9 @@ class ReviewHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/docs":
             self._json({"docs": list_documents(self.data_dir)}, no_store=True)
+            return
+        if path == "/api/search":
+            self._serve_search(parsed.query)
             return
         if path == "/comments":
             doc_id = (parse_qs(parsed.query).get("doc") or [""])[0]
@@ -945,42 +949,86 @@ pre.snapshot {{ white-space: pre-wrap; overflow-wrap: anywhere; font-family: var
 """
         self._html(self._themed_doc_html(markup.encode("utf-8")).decode("utf-8"), code)
 
+    # -- search -------------------------------------------------------------
+
+    def _serve_search(self, query: str) -> None:
+        params = parse_qs(query, keep_blank_values=True)
+        try:
+            terms = search.parse_query(_first(params, "q"))
+            repos = _repo_params(params)
+            date_from = search.parse_date(_first(params, "from") or None)
+            date_to = search.parse_date(_first(params, "to") or None)
+            limit = _int_param(params, "limit", search.DEFAULT_LIMIT)
+            offset = _int_param(params, "offset", 0)
+            index = self.server.search_index
+            index.maybe_sync()
+            result = index.search(
+                terms=terms,
+                repos=repos or None,
+                date_from=date_from,
+                date_to=date_to,
+                sort=_first(params, "sort") or "modified",
+                limit=limit,
+                offset=offset,
+            )
+        except search.QueryError as exc:
+            self._error(400, str(exc))
+            return
+        self._json(result, no_store=True)
+
     # -- index page ---------------------------------------------------------
 
     def _render_index(self) -> None:
-        entries = list_documents(self.data_dir)
-        cards: list[str] = []
-        for entry in entries:
-            prov = entry["provenance"]
-            repo = prov.get("sourceRepoName") or ""
-            branch = prov.get("sourceRepoBranch") or ""
-            session = prov.get("sessionId") or ""
-            session_short = session[:8] if session else ""
-            created = (entry["createdAt"] or "")[:16].replace("T", " ")
-            open_count = entry["openComments"]
-            total_count = entry["totalComments"]
-            if open_count is None:
-                count_label = "comments unreadable"
-            elif total_count == 0:
-                count_label = "no comments"
-            else:
-                count_label = f"{open_count} open · {total_count} total"
-            repo_bits = []
-            if repo:
-                repo_bits.append(f"<span class='chip repo'>{html.escape(repo)}{(':' + html.escape(branch)) if branch else ''}</span>")
-            if session_short:
-                repo_bits.append(f"<span class='chip session' title='agent session id: {html.escape(session)}'>session {html.escape(session_short)}</span>")
-            if prov.get("agent"):
-                repo_bits.append(f"<span class='chip agent'>{html.escape(str(prov['agent']))}</span>")
-            chips = "".join(repo_bits)
-            cards.append(
-                f"""<li class="card">
-  <a class="title" href="/rendered/{html.escape(entry['docId'])}/index.html">{html.escape(entry["title"])}</a>
-  <div class="meta"><span>{html.escape(created)}</span><span class="path">{html.escape(entry["sourcePath"])}</span></div>
-  <div class="chips">{chips}<span class="chip count">{html.escape(count_label)}</span></div>
-</li>"""
+        # The page renders whatever search state the URL carries, so a search
+        # is linkable, survives reload, and works without JS. search_ui.py's
+        # client script re-renders the same markup from /api/search.
+        params = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+        state = {
+            "q": _first(params, "q"),
+            "sort": _first(params, "sort") or "modified",
+            "from": _first(params, "from"),
+            "to": _first(params, "to"),
+        }
+        try:
+            terms = search.parse_query(state["q"])
+            repos = _repo_params(params)
+            date_from = search.parse_date(state["from"] or None)
+            date_to = search.parse_date(state["to"] or None)
+            limit = _int_param(params, "limit", search.DEFAULT_LIMIT)
+            offset = _int_param(params, "offset", 0)
+            index = self.server.search_index
+            index.maybe_sync()
+            result = index.search(
+                terms=terms,
+                repos=repos or None,
+                date_from=date_from,
+                date_to=date_to,
+                sort=state["sort"],
+                limit=limit,
+                offset=offset,
             )
-        listing = "\n".join(cards) if cards else "<p class='empty'>No documents rendered yet. Run <code>md-review render your-doc.md</code>.</p>"
+        except search.QueryError as exc:
+            self._error(400, str(exc))
+            return
+        selected = set(repos)
+        indexing = result["indexing"]
+        status = f"{result['total']} {'document' if result['total'] == 1 else 'documents'}"
+        status_class = ""
+        if indexing["done"] < indexing["total"]:
+            status += f" · indexing {indexing['done']}/{indexing['total']}, results are partial"
+            status_class = " indexing"
+        page_state = {
+            "q": state["q"],
+            "sort": "" if state["sort"] == "modified" else state["sort"],
+            "from": state["from"],
+            "to": state["to"],
+            "repo": sorted(selected),
+            "limit": "" if limit == search.DEFAULT_LIMIT else str(limit),
+        }
+        toolbar = search_ui.render_toolbar(state, result["facets"]["repos"], selected)
+        filtered = bool(state["q"] or repos or state["from"] or state["to"])
+        listing = search_ui.render_list(result, terms, filtered=filtered)
+        pager = search_ui.render_pager(result, page_state)
         host_label = html.escape(f"{self.server.server_address[0]}:{self.server.server_address[1]}")
         # Server-level default theme (see --theme / MD_REVIEW_THEME). Explicit
         # themes stamp data-theme on <html> — light included, even though no
@@ -1026,6 +1074,7 @@ a.title:hover {{ color: var(--rds-accent-strong); text-decoration: underline; te
 .chip.count {{ margin-left: auto; }}
 .empty {{ color: var(--rds-ink-5); font-size: 13px; }}
 code {{ font-family: var(--rds-font-mono); background: var(--rds-surface-rail); border: 1px solid var(--rds-line); border-radius: 4px; padding: 1px 5px; }}
+{search_ui.INDEX_CSS}
 </style>
 </head>
 <body>
@@ -1036,10 +1085,12 @@ code {{ font-family: var(--rds-font-mono); background: var(--rds-surface-rail); 
       <button class="theme-glyph" data-theme-set="light" type="button" title="Light" aria-label="Light theme">☼</button><button class="theme-glyph" data-theme-set="dusk" type="button" title="Dusk" aria-label="Dusk theme">◐</button><button class="theme-glyph" data-theme-set="dark" type="button" title="Dark" aria-label="Dark theme">☾</button>
     </span>
   </div>
-  <div class="sub">{len(entries)} document{"s" if len(entries) != 1 else ""} · bound {host_label} · LAN-only · <a href="/api/docs" style="color:inherit">/api/docs</a></div>
-  <ul>
+  {toolbar}
+  <div class="sub"><span id="status" class="status{status_class}">{html.escape(status)}</span> · bound {host_label} · LAN-only · <a href="/api/docs" style="color:inherit">/api/docs</a></div>
+  <ul id="results" data-limit="{limit}">
 {listing}
   </ul>
+  <div class="pagerbar" id="pager">{pager}</div>
 </div>
 <script>
 // Same per-device glyph picker the doc page offers, on the same localStorage
@@ -1059,6 +1110,9 @@ code {{ font-family: var(--rds-font-mono); background: var(--rds-surface-rail); 
   }}
   paint();
 }})();
+</script>
+<script>
+{search_ui.client_script()}
 </script>
 </body>
 </html>
@@ -1109,6 +1163,28 @@ def parse_links_field(raw: object) -> store.Captures | None:
             raise ValueError("links.reasons maps a target path to a reason string")
         captures.reasons[target] = reason[: store.MAX_LINK_REASON_LENGTH]
     return captures
+
+
+def _first(params: dict[str, list[str]], name: str) -> str:
+    values = params.get(name)
+    return values[0] if values else ""
+
+
+def _int_param(params: dict[str, list[str]], name: str, default: int) -> int:
+    raw = _first(params, name)
+    if raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        raise search.QueryError(f"{name} must be a whole number") from None
+
+
+def _repo_params(params: dict[str, list[str]]) -> list[str]:
+    repos = params.get("repo", [])
+    if len(repos) > search.MAX_REPO_FILTERS:
+        raise search.QueryError(f"at most {search.MAX_REPO_FILTERS} repo filters; remove some")
+    return repos
 
 
 class FramingError(Exception):
@@ -1206,6 +1282,9 @@ def serve(
         extra_host_names=extra_names,
         theme=theme,
     )
+    # The first search index build runs off the request path; searches made
+    # before it finishes answer from what is indexed and report progress.
+    threading.Thread(target=server.search_index.sync, name="md-review-search-build", daemon=True).start()
     print(f"md-review {__version__} -> http://{host}:{port}/")
     for addr in lan_addresses():
         print(f"  LAN URL  : http://{addr}:{port}/")
