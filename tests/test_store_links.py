@@ -137,8 +137,8 @@ class CaptureLinksTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_captures_linked_files_and_records_reasons(self) -> None:
-        (self.repo / "docs" / "reports" / "a.md").write_text("# A\n", encoding="utf-8")
-        (self.repo / "docs" / ".env").write_text("K=v\n", encoding="utf-8")
+        (self.repo / "docs" / "reports" / "a.md").write_bytes(b"# A\n")
+        (self.repo / "docs" / ".env").write_bytes(b"K=v\n")
         md = "[a](reports/a.md) [e](.env) [m](missing.txt) [x](https://e.com) [o](../../out.md)\n"
         caps = store.capture_links(md, "docs/plan.md", self.repo)
         self.assertEqual({"docs/reports/a.md": b"# A\n"}, caps.files)
@@ -149,7 +149,7 @@ class CaptureLinksTests(unittest.TestCase):
     def test_non_repo_doc_captures_within_its_folder(self) -> None:
         folder = Path(self.tmp.name).resolve() / "notes"
         folder.mkdir()
-        (folder / "b.md").write_text("b\n", encoding="utf-8")
+        (folder / "b.md").write_bytes(b"b\n")
         source = (folder / "a.md").as_posix()
         caps = store.capture_links("[b](b.md)\n", source, None)
         self.assertEqual({(folder / "b.md").as_posix(): b"b\n"}, caps.files)
@@ -169,7 +169,7 @@ class RenderDocumentCaptureTests(unittest.TestCase):
             repo = Path(td).resolve() / "repo"
             (repo / "docs").mkdir(parents=True)
             subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True, capture_output=True)
-            (repo / "docs" / "note.txt").write_text("hello\n", encoding="utf-8")
+            (repo / "docs" / "note.txt").write_bytes(b"hello\n")
             md = repo / "docs" / "plan.md"
             md.write_text("[n](note.txt)\n", encoding="utf-8")
             page = store.render_document(md, Path(td) / "data", "Plan")

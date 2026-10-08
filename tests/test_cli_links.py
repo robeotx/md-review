@@ -62,7 +62,7 @@ class RenderCommandTests(unittest.TestCase):
         self.repo = Path(self.tmp.name).resolve() / "repo"
         (self.repo / "docs").mkdir(parents=True)
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.repo, check=True, capture_output=True)
-        (self.repo / "docs" / "note.txt").write_text("hello\n", encoding="utf-8")
+        (self.repo / "docs" / "note.txt").write_bytes(b"hello\n")
         self.md = self.repo / "docs" / "plan.md"
         self.md.write_text("# Plan\n\n[n](note.txt)\n", encoding="utf-8")
         self.data = Path(self.tmp.name) / "data"
