@@ -97,6 +97,11 @@ def resolve_target(source_display_path: str, link_path: str, *, in_repo: bool) -
     return joined
 
 
+def is_repo_relative(display_path: str) -> bool:
+    """Display paths are repo-relative inside a repo, absolute POSIX outside."""
+    return not (display_path.startswith("/") or re.match(r"^[A-Za-z]:/", display_path))
+
+
 def link_key(identity: str) -> str:
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
 

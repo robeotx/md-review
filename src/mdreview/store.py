@@ -6,6 +6,8 @@ Layout under the data directory::
     <data-dir>/rendered/<doc-id>/anchors.json   — every commentable element
     <data-dir>/rendered/<doc-id>/manifest.json  — source, title, times, provenance
     <data-dir>/rendered/<doc-id>/comments.json  — the persisted comment channel
+    <data-dir>/rendered/<doc-id>/links.json     — relative-link targets (see links.py)
+    <data-dir>/rendered/<doc-id>/files/<sha256> — linked files captured by the publisher
 
 Comments are the contract: a JSON array per document, written atomically
 (unique tmp file, fsync, rename), and the store fails loud — never silently
@@ -25,16 +27,22 @@ in the README).
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import os
+import posixpath
 import re
 import threading
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
+from . import links
 from .provenance import collect_provenance, normalize_provenance
-from .renderer import MarkdownRenderer, page_html, short_hash, slugify
+from .renderer import LinkRendering, MarkdownRenderer, page_html, short_hash, slugify
 
 ENV_DATA_DIR = "MD_REVIEW_DATA_DIR"
 
@@ -45,6 +53,169 @@ _store_lock = threading.Lock()
 # only these characters ever appear, which is what makes the URL routes and
 # the on-disk layout safe to join without a traversal escape.
 DOC_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+# Store-wide ceiling on captured linked-file bytes; past it a render still
+# succeeds but its captures are dropped and marked unavailable.
+STORE_ATTACHMENT_QUOTA = 2 * 1024 * 1024 * 1024
+MAX_LINK_REASON_LENGTH = 200
+NO_CAPTURE_REASON = "not captured by the publisher"
+CAPTURE_OFF_REASON = "capture turned off by the publisher"
+PER_DOC_REASON = f"over the per-document capture limit ({links.MAX_DOC_CAPTURE_BYTES // (1024 * 1024)} MiB)"
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+# Characters left as-is when a link's #fragment is copied onto the rewritten href.
+_FRAGMENT_SAFE = "-._~!$&'()*+,;=:@/?%"
+
+
+@dataclass
+class Captures:
+    """What the publisher shipped for a doc's relative links: file bytes keyed
+    by target identity, plus a reason for each target it could not capture.
+    ``disabled`` means the publisher turned capture off (``--no-capture``)."""
+
+    files: dict[str, bytes] = field(default_factory=dict)
+    reasons: dict[str, str] = field(default_factory=dict)
+    disabled: bool = False
+
+
+def _relative_hrefs(markdown: str) -> list[str]:
+    """Every relative href exactly as the renderer itself sees it, in order —
+    collected through the renderer's own link path, never a second scanner."""
+    seen: list[str] = []
+
+    def collect(href: str, is_image: bool) -> None:
+        seen.append(href)
+
+    MarkdownRenderer(link_resolver=collect).render(markdown)
+    return seen
+
+
+def capture_links(markdown: str, source_display: str, repo_root: Path | None) -> Captures:
+    """Publisher side: read the files ``markdown`` links to, under the capture
+    policy in links.capture_file and the per-document budget. Runs only where
+    the files live (a local render, or the CLI before a --server POST)."""
+    in_repo = repo_root is not None
+    boundary = repo_root.resolve() if repo_root is not None else Path(posixpath.dirname(source_display)).resolve()
+    captures = Captures()
+    seen: set[str] = set()
+    total = 0
+    for href in _relative_hrefs(markdown):
+        split = links.split_relative_href(href)
+        if split is None:
+            continue
+        try:
+            identity = links.resolve_target(source_display, split[0], in_repo=in_repo)
+        except links.Unavailable:
+            continue  # the server derives the same reason from the markdown itself
+        if identity in seen:
+            continue
+        seen.add(identity)
+        if len(seen) > links.MAX_TARGETS:
+            captures.reasons[identity] = "too many linked files"
+            continue
+        native = repo_root / identity if repo_root is not None else Path(identity)
+        try:
+            data = links.capture_file(native, boundary, identity)
+        except links.Unavailable as exc:
+            captures.reasons[identity] = str(exc)
+            continue
+        if total + len(data) > links.MAX_DOC_CAPTURE_BYTES:
+            captures.reasons[identity] = PER_DOC_REASON
+            continue
+        total += len(data)
+        captures.files[identity] = data
+    return captures
+
+
+def _attachment_bytes(data_dir: Path, exclude_doc_id: str) -> int:
+    total = 0
+    for files_dir in rendered_dir(data_dir).glob("*/files"):
+        if files_dir.parent.name == exclude_doc_id:
+            continue
+        for blob in files_dir.iterdir():
+            with contextlib.suppress(OSError):  # removed by a concurrent re-render
+                total += blob.stat().st_size
+    return total
+
+
+class _LinkTable:
+    """Server side: turns each relative link the renderer meets into a
+    links.json entry and a /link href. Trusts nothing the client sent except
+    file BYTES for identities this render itself found: kinds, MIME types and
+    doc ids are all derived here."""
+
+    def __init__(self, *, source_path: str, namespace: str, doc_id: str, captures: Captures | None, quota_room: int):
+        self.source_path = source_path
+        self.in_repo = links.is_repo_relative(source_path)
+        self.namespace = namespace
+        self.doc_id = doc_id
+        self.captures = captures
+        self.quota_room = quota_room
+        self.captured_total = 0
+        self.entries: dict[str, dict] = {}
+        self.blobs: dict[str, bytes] = {}
+
+    def resolve(self, href: str, is_image: bool) -> LinkRendering:
+        split = links.split_relative_href(href)
+        assert split is not None  # the renderer only consults us for relative hrefs
+        path, fragment = split
+        try:
+            identity: str | None = links.resolve_target(self.source_path, path, in_repo=self.in_repo)
+            unresolved = ""
+            key = links.link_key(identity)
+        except links.Unavailable as exc:
+            identity, unresolved = None, str(exc)
+            key = links.link_key("\x00unresolved\x00" + path)
+        entry = self.entries.get(key)
+        if entry is None:
+            if len(self.entries) >= links.MAX_TARGETS:
+                return LinkRendering(href="#", css_class="md-link-unavailable", title="too many linked files")
+            entry = self._entry(identity, unresolved)
+            self.entries[key] = entry
+        url = f"/link/{self.doc_id}/{key}"
+        if fragment:
+            url += "#" + quote(fragment, safe=_FRAGMENT_SAFE)
+        captured = "sha256" in entry
+        available = entry["kind"] == "doc" or captured
+        title = entry["target"] or path
+        if not available:
+            title = f"{title} — {entry['reason']}"
+        return LinkRendering(
+            href=url,
+            css_class="md-link-local" if available else "md-link-unavailable",
+            title=title,
+            image=is_image and entry["kind"] == "image" and captured,
+        )
+
+    def _entry(self, identity: str | None, unresolved: str) -> dict:
+        if identity is None:
+            return {"target": None, "kind": "unavailable", "reason": unresolved}
+        entry: dict = {"target": identity, "kind": links.kind_for(identity)}
+        if entry["kind"] == "doc":
+            entry["docId"] = doc_id_for(identity, self.namespace)
+        captures = self.captures
+        data = captures.files.get(identity) if captures is not None else None
+        if data is not None:
+            if len(data) > links.MAX_FILE_BYTES:
+                reason = f"too large (over {links.MAX_FILE_BYTES // (1024 * 1024)} MiB)"
+            elif self.captured_total + len(data) > links.MAX_DOC_CAPTURE_BYTES:
+                reason = PER_DOC_REASON
+            elif len(data) > self.quota_room:
+                reason = "not captured (server storage limit reached)"
+            else:
+                sha = hashlib.sha256(data).hexdigest()
+                self.blobs[sha] = data
+                self.captured_total += len(data)
+                self.quota_room -= len(data)
+                entry.update(sha256=sha, size=len(data))
+                return entry
+        elif captures is None:
+            reason = NO_CAPTURE_REASON
+        elif captures.disabled:
+            reason = CAPTURE_OFF_REASON
+        else:
+            reason = str(captures.reasons.get(identity) or NO_CAPTURE_REASON)
+        entry["reason"] = reason[:MAX_LINK_REASON_LENGTH]
+        return entry
 
 
 def default_data_dir() -> Path:
@@ -137,11 +308,13 @@ def render_document(
     agent: str | None = None,
     session_id: str | None = None,
     agent_cwd: str | None = None,
+    capture: bool = True,
 ) -> Path:
     """Render ``input_path`` into the store and return the page path.
 
     ``provenance`` may be supplied by a caller that collected it on another
     machine (see the /api/render route); otherwise it is collected locally.
+    ``capture`` copies the files the document links to (see capture_links).
     """
     if input_path.suffix.lower() != ".md":
         raise ValueError(f"render input must be a .md file: {input_path}")
@@ -155,19 +328,22 @@ def render_document(
     repo_root = Path(provenance["sourceRepoRoot"]) if provenance.get("sourceRepoRoot") else None
     source_path = display_path_for(input_path, repo_root)
     doc_id = doc_id_for(source_path, doc_namespace(provenance))
+    # utf-8-sig: a BOM is silently dropped rather than breaking a leading
+    # heading (the renderer has no BOM handling, by design)
+    markdown = input_path.read_text(encoding="utf-8-sig")
+    captures = capture_links(markdown, source_path, repo_root) if capture else Captures(disabled=True)
     return render_payload(
-        # utf-8-sig: a BOM is silently dropped rather than breaking a leading
-        # heading (the renderer has no BOM handling, by design)
-        markdown=input_path.read_text(encoding="utf-8-sig"),
+        markdown=markdown,
         source_path=source_path,
         doc_id=doc_id,
         title=title or input_path.stem.replace("-", " "),
         data_dir=data_dir,
         provenance=provenance,
+        captures=captures,
     )
 
 
-def _atomic_write(path: Path, content: str, *, private: bool = False) -> None:
+def _atomic_write(path: Path, content: str | bytes, *, private: bool = False) -> None:
     """Write via a uniquely-named sibling tmp file, fsync, then rename.
 
     Unique tmp names keep two WRITERS (threads or processes) from
@@ -176,13 +352,14 @@ def _atomic_write(path: Path, content: str, *, private: bool = False) -> None:
     carries the final mode across the rename, so privacy bits must be set on
     the TMP — otherwise the first write silently undoes the creation-time
     chmod.
-    ``newline=""`` keeps store bytes identical across OSs (no CRLF
-    translation on Windows).
+    Text is encoded to UTF-8 and written in binary mode, which keeps store
+    bytes identical across OSs (no CRLF translation on Windows).
     """
+    data = content.encode("utf-8") if isinstance(content, str) else content
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
     try:
-        with tmp.open("w", encoding="utf-8", newline="") as fh:
-            fh.write(content)
+        with tmp.open("wb") as fh:
+            fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
         if private and os.name == "posix":  # chmod is a documented no-op on Windows
@@ -208,9 +385,13 @@ def render_payload(
     title: str,
     data_dir: Path,
     provenance: dict,
+    captures: Captures | None = None,
 ) -> Path:
     """Render already-loaded markdown into the store. Shared by local renders
-    and the /api/render route (where the markdown arrives over HTTP)."""
+    and the /api/render route (where the markdown arrives over HTTP).
+
+    ``captures`` are the publisher's linked-file bytes; None means an older
+    publisher that captures nothing (doc links still resolve by id)."""
     provenance = normalize_provenance(provenance, keep=("receivedFrom", "receivedAt"))
     ensure_data_dir(data_dir)
     with _store_lock:
@@ -228,8 +409,27 @@ def render_payload(
                 os.chmod(comments_file, 0o600)
         except FileExistsError:
             pass
-        renderer = MarkdownRenderer()
+        table = _LinkTable(
+            source_path=source_path,
+            namespace=doc_namespace(provenance),
+            doc_id=doc_id,
+            captures=captures,
+            quota_room=max(0, STORE_ATTACHMENT_QUOTA - _attachment_bytes(data_dir, doc_id)),
+        )
+        renderer = MarkdownRenderer(link_resolver=table.resolve)
         body = renderer.render(markdown)
+        # Blobs first (content-addressed, so a reader of the OLD links.json
+        # still finds its files), then links.json, then the page; obsolete
+        # blobs are removed only after nothing written here references them.
+        files_dir = out_dir / "files"
+        if table.blobs:
+            files_dir.mkdir(exist_ok=True)
+            if os.name == "posix":
+                os.chmod(files_dir, 0o700)
+            for sha, data in table.blobs.items():
+                if not (files_dir / sha).exists():
+                    _atomic_write(files_dir / sha, data)
+        _atomic_write(out_dir / "links.json", json.dumps(table.entries, indent=2, ensure_ascii=False) + "\n")
 
         now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
         created_at = now_iso
@@ -275,6 +475,10 @@ def render_payload(
             json.dumps([a.as_json() for a in renderer.anchors], indent=2, ensure_ascii=False) + "\n",
         )
         _atomic_write(manifest_file, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+        if files_dir.is_dir():
+            for blob in files_dir.iterdir():
+                if SHA256_RE.match(blob.name) and blob.name not in table.blobs:
+                    blob.unlink(missing_ok=True)
         return out_dir / "index.html"
 
 
