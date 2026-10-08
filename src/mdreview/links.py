@@ -162,7 +162,7 @@ def capture_file(path: Path, boundary: Path, identity: str) -> bytes:
     if reason:
         raise Unavailable(reason)
     try:
-        fd = _open_beneath(boundary, inside)
+        fd = _open_without_symlinks(resolved)
     except FileNotFoundError:
         raise Unavailable("file not found") from None
     except OSError:
@@ -194,19 +194,20 @@ _FILE_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLO
 _CAN_WALK = os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY")
 
 
-def _open_beneath(boundary: Path, inside: str) -> int:
-    """Open ``boundary/inside`` without following a symlink at ANY level below
-    ``boundary``: each directory is opened relative to its parent's descriptor
-    with O_NOFOLLOW, so swapping an ancestor for a symlink after ``resolve()``
-    cannot redirect the read. ``inside`` is already symlink-free (resolved).
+def _open_without_symlinks(resolved: Path) -> int:
+    """Open an already-resolved (hence symlink-free) absolute path without
+    following a symlink at ANY level: each directory, from the filesystem root
+    down, is opened relative to its parent's descriptor with O_NOFOLLOW. So
+    swapping the boundary, or any ancestor of it, for a symlink after
+    ``resolve()`` cannot redirect the read; the walk fails instead.
     O_NONBLOCK keeps a FIFO from hanging the open; the caller rejects it.
     Platforms without dir_fd support (Windows) fall back to one plain open."""
     if not _CAN_WALK:
-        return os.open(boundary / inside, _FILE_FLAGS)
-    parts = [part for part in inside.split("/") if part]
+        return os.open(resolved, _FILE_FLAGS)
+    parts = list(resolved.parts[1:])
     if not parts:
-        raise IsADirectoryError(inside)
-    dir_fd = os.open(boundary, os.O_RDONLY | os.O_DIRECTORY)
+        raise IsADirectoryError(str(resolved))
+    dir_fd = os.open(resolved.anchor, os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in parts[:-1]:
             next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)

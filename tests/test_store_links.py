@@ -200,12 +200,24 @@ class ReviewFindingsTests(unittest.TestCase):
             )
         self.assertEqual([], list((self.data / "rendered").glob("*/files/*")))
 
-    def test_quota_counts_the_documents_own_existing_blobs(self) -> None:
+    def test_refresh_at_quota_replaces_the_documents_own_attachment(self) -> None:
         with mock.patch.object(store, "STORE_ATTACHMENT_QUOTA", 6):
             render(self.data, "[d](d.txt)\n", store.Captures(files={"docs/d.txt": b"1111"}, reasons={}))
             page = render(self.data, "[d](d.txt)\n", store.Captures(files={"docs/d.txt": b"2222"}, reasons={}))
-        # 4 stored + 4 new > 6: the replacement is refused rather than over-filling the store.
-        self.assertIn("storage limit", by_target(page)["docs/d.txt"]["reason"])
+        # The doc's own referenced bytes are credited (they are replaced), so a
+        # refresh keeps its attachment; afterwards only the new blob remains.
+        self.assertIn("sha256", by_target(page)["docs/d.txt"])
+        self.assertEqual([b"2222"], [p.read_bytes() for p in (page.parent / "files").iterdir()])
+
+    def test_orphans_from_failed_renders_are_removed_and_never_credited(self) -> None:
+        page = render(self.data, "[d](d.txt)\n", store.Captures(files={"docs/d.txt": b"1111"}, reasons={}))
+        orphan = page.parent / "files" / ("f" * 64)  # a blob no links.json references
+        orphan.write_bytes(b"xxxxxxxx")
+        with mock.patch.object(store, "STORE_ATTACHMENT_QUOTA", 6):
+            page = render(self.data, "[e](e.txt)\n", store.Captures(files={"docs/e.txt": b"22222222"}, reasons={}))
+        self.assertFalse(orphan.exists())
+        # Orphan removed, own referenced 4 bytes credited: room 6, and 8 > 6.
+        self.assertIn("storage limit", by_target(page)["docs/e.txt"]["reason"])
 
     def test_namespace_drift_never_crosses_repos_with_different_remotes(self) -> None:
         def publish(source: str, remote: str, markdown: str) -> Path:

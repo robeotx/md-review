@@ -134,10 +134,12 @@ def _attr(value: str) -> str:
     return html.escape(value.replace("\x00", ""), quote=True).replace("*", "&#42;")
 
 
-def _unlink(text: str) -> str:
-    """Links and images reduced to their label: for outline entries, which are
-    themselves links (nesting <a> is invalid) and render outside any resolver."""
-    return re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)
+def render_inline_unlinked(text: str) -> str:
+    """render_inline with every generated <a> tag removed, keeping its label:
+    for outline entries, which are links themselves (nesting <a> is invalid)
+    and render outside any resolver. Stripping the OUTPUT keeps code spans
+    intact, and is exact: user text is escaped, so every `<a` here is ours."""
+    return re.sub(r"</?a\b[^>]*>", "", render_inline(text))
 
 
 def render_inline(text: str) -> str:
@@ -625,7 +627,7 @@ def page_html(
     else:
         subtitle = source_path
     toc_html = "\n".join(
-        f'<a class="toc-l{int(item["level"])}" href="#{escape_attr(item["id"])}">{render_inline(_unlink(item["text"]))}</a>'
+        f'<a class="toc-l{int(item["level"])}" href="#{escape_attr(item["id"])}">{render_inline_unlinked(item["text"])}</a>'
         for item in toc
     )
     # json.dumps output is valid JSON but NOT safe <script>-element text: a

@@ -161,6 +161,29 @@ def _attachment_bytes(data_dir: Path) -> int:
     return total
 
 
+def _prune_orphan_blobs(doc_dir: Path) -> tuple[set[str], int]:
+    """Delete this doc's blobs that its current links.json does not reference
+    (debris from a render that failed mid-write) and return the referenced
+    hashes still on disk plus their total size. Call under the store locks."""
+    files_dir = doc_dir / "files"
+    if not files_dir.is_dir():
+        return set(), 0
+    entries = _read_json_dict(doc_dir / "links.json") or {}
+    referenced = {e.get("sha256") for e in entries.values() if isinstance(e, dict)}
+    kept: set[str] = set()
+    kept_bytes = 0
+    for blob in files_dir.iterdir():
+        if not SHA256_RE.match(blob.name):
+            continue
+        if blob.name in referenced:
+            kept.add(blob.name)
+            with contextlib.suppress(OSError):
+                kept_bytes += blob.stat().st_size
+        else:
+            blob.unlink(missing_ok=True)
+    return kept, kept_bytes
+
+
 class _LinkTable:
     """Server side: turns each relative link the renderer meets into a
     links.json entry and a /link href. Trusts nothing the client sent except
@@ -449,16 +472,19 @@ def render_payload(
         except FileExistsError:
             pass
         files_dir = out_dir / "files"
-        stored = {p.name for p in files_dir.iterdir() if SHA256_RE.match(p.name)} if files_dir.is_dir() else set()
-        # The quota counts EVERY stored blob, this doc's included, and only
-        # bytes not already stored are charged — so neither failed renders
-        # nor re-renders can ratchet the store past the ceiling.
+        stored, own_bytes = _prune_orphan_blobs(out_dir)
+        # Quota: every stored blob counts, but this doc's own REFERENCED blobs
+        # are credited back — a refresh replaces them, and cleanup below
+        # removes whatever the new render no longer references. Orphans
+        # (left by a failed render) were just deleted, so they can never be
+        # credited and ratchet the store up. Peak usage can exceed the quota
+        # by at most one document's capture budget, during the write.
         table = _LinkTable(
             source_path=source_path,
             namespace=doc_namespace(provenance),
             doc_id=doc_id,
             captures=captures,
-            quota_room=max(0, STORE_ATTACHMENT_QUOTA - _attachment_bytes(data_dir)),
+            quota_room=max(0, STORE_ATTACHMENT_QUOTA - _attachment_bytes(data_dir) + own_bytes),
             already_stored=stored,
         )
         renderer = MarkdownRenderer(link_resolver=table.resolve)

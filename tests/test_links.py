@@ -174,6 +174,26 @@ class CaptureReviewFindingsTests(TempRootCase):
         with mock.patch.object(Path, "resolve", swap_then_resolve), self.assertRaises(links.Unavailable):
             links.capture_file(self.root / "docs/r.txt", self.root, "docs/r.txt")
 
+    @unittest.skipUnless(os.name == "posix", "posix openat walk")
+    def test_boundary_itself_swapped_for_a_symlink_after_resolution_is_refused(self) -> None:
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        (Path(outside.name) / "r.txt").write_bytes(b"outside")
+        repo = self.root / "repo"
+        (repo).mkdir()
+        (repo / "r.txt").write_bytes(b"inside")
+        real_resolve = Path.resolve
+
+        def swap_then_resolve(path: Path, *args, **kwargs) -> Path:
+            resolved = real_resolve(path, *args, **kwargs)
+            if repo.is_dir() and not repo.is_symlink():
+                repo.rename(self.root / "moved")
+                repo.symlink_to(outside.name)
+            return resolved
+
+        with mock.patch.object(Path, "resolve", swap_then_resolve), self.assertRaises(links.Unavailable):
+            links.capture_file(repo / "r.txt", repo, "r.txt")
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())

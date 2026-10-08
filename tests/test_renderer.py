@@ -625,6 +625,16 @@ class ReviewFindingsRendererTests(unittest.TestCase):
         self.assertNotIn("href", toc.split(">", 1)[1])
         self.assertIn("Guide report", toc)
 
+    def test_toc_keeps_code_spans_and_never_nests_links(self) -> None:
+        for heading, expected in (("# Guide `[x](r.md)`\n", "[x](r.md)"), ("# Guide [a `]` b](r.md)\n", None)):
+            renderer = MarkdownRenderer()
+            page = page_html("T", "src.md", "doc-1", renderer.render(heading), [], renderer.toc)
+            toc = page.split('class="toc-l1"', 1)[1].split("</a>", 1)[0].split(">", 1)[1]
+            self.assertNotIn("<a ", toc, heading)
+            self.assertNotIn("href", toc, heading)
+            if expected:
+                self.assertIn(expected, toc)
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())
