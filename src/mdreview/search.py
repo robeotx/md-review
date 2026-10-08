@@ -50,6 +50,7 @@ SIGNATURE_FILES = ("index.html", "manifest.json", "comments.json", "links.json")
 
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
+_LINK_KEY_RE = re.compile(r"[0-9a-f]{16}")  # the /link route serves only keys of this shape
 _STRING_LITERAL_RE = re.compile(rf'"(?:[^"\\\n]|\\.){{{MIN_LITERAL_CHARS},}}"')
 _VOID_TAGS = frozenset(
     {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
@@ -261,7 +262,8 @@ def _signature(doc_dir: Path) -> tuple:
     for name in SIGNATURE_FILES:
         try:
             st = os.lstat(doc_dir / name)
-        except FileNotFoundError:
+        except OSError:
+            # Missing, or unreadable (a dir the publisher locked): either way there is no usable signature.
             parts.append(None)
             continue
         parts.append((st.st_ino, st.st_mtime_ns, st.st_size) if stat.S_ISREG(st.st_mode) else None)
@@ -275,7 +277,9 @@ class Item:
     title: str
     path: str
     text: str
-    haystack: str
+    title_f: str
+    path_f: str
+    text_f: str
     url: str
     truncated: bool
 
@@ -304,8 +308,9 @@ class DocRecord:
         return int(self.doc_item.truncated) + sum(1 for child in self.children if child.truncated)
 
 
-def _haystack(*parts: str) -> str:
-    return "\n".join(parts).casefold()
+def _make_item(kind: str, ext: str, title: str, path: str, text: str, url: str, truncated: bool) -> Item:
+    """An Item with its folded copies. Matching uses the folds; snippets use the original text."""
+    return Item(kind, ext, title, path, text, title.casefold(), path.casefold(), text.casefold(), url, truncated)
 
 
 def _file_items(doc_dir: Path, doc_id: str) -> list[Item]:
@@ -314,7 +319,9 @@ def _file_items(doc_dir: Path, doc_id: str) -> list[Item]:
         return []
     items: list[Item] = []
     for key, entry in raw.items():
-        if not isinstance(key, str) or not isinstance(entry, dict) or entry.get("kind") == "doc":
+        if not isinstance(key, str) or not _LINK_KEY_RE.fullmatch(key):
+            continue
+        if not isinstance(entry, dict) or entry.get("kind") == "doc":
             continue
         target = _text(entry.get("target"))
         if not target:
@@ -322,18 +329,7 @@ def _file_items(doc_dir: Path, doc_id: str) -> list[Item]:
         text, truncated = _captured_text(doc_dir, entry)
         url = f"/link/{quote(doc_id, safe='')}/{quote(key, safe='')}"
         ext = posixpath.splitext(target.replace("\\", "/"))[1].lower().lstrip(".")
-        items.append(
-            Item(
-                "file",
-                ext,
-                _last_segment(target),
-                target,
-                text,
-                _haystack(_last_segment(target), target, text),
-                url,
-                truncated,
-            )
-        )
+        items.append(_make_item("file", ext, _last_segment(target), target, text, url, truncated))
     return items
 
 
@@ -366,7 +362,7 @@ def _comment_items(doc_id: str, comments: list) -> list[Item]:
         body = "\n".join(part for part in (_text(comment.get("text")), author, _text(comment.get("quote"))) if part)
         text, truncated = _cap(body, MAX_ITEM_CHARS)
         title = f"comment by {author}" if author else "comment"
-        items.append(Item("comment", "comment", title, "", text, _haystack(title, text), url, truncated))
+        items.append(_make_item("comment", "comment", title, "", text, url, truncated))
     return items
 
 
@@ -403,16 +399,7 @@ def _build_record(doc_dir: Path, doc_id: str, signature: tuple) -> DocRecord | N
         title = _text(manifest.get("title")) or doc_id
         body = _read_body(index_path, extract_doc_text)
         text, truncated = body
-        doc_item = Item(
-            "doc",
-            "md",
-            title,
-            source_path,
-            text,
-            _haystack(title, source_path, text),
-            f"/rendered/{doc_id}/index.html",
-            truncated,
-        )
+        doc_item = _make_item("doc", "md", title, source_path, text, f"/rendered/{doc_id}/index.html", truncated)
         return DocRecord(
             doc_id=doc_id,
             kind="doc",
@@ -440,16 +427,7 @@ def _build_record(doc_dir: Path, doc_id: str, signature: tuple) -> DocRecord | N
         modified = datetime.fromtimestamp(os.stat(index_path).st_mtime, tz=_UTC)
     except OSError:
         modified = None
-    doc_item = Item(
-        "page",
-        "html",
-        title,
-        "",
-        text,
-        _haystack(title, text),
-        f"/rendered/{doc_id}/index.html",
-        truncated,
-    )
+    doc_item = _make_item("page", "html", title, "", text, f"/rendered/{doc_id}/index.html", truncated)
     return DocRecord(
         doc_id=doc_id,
         kind="page",
@@ -505,17 +483,33 @@ def _doc_dir_names(base: Path) -> list[str]:
 
 
 def _matches(item: Item, terms: list[str]) -> bool:
-    return all(term in item.haystack for term in terms)
+    # Terms hold no whitespace, so a term cannot straddle the parts: "each term appears in some part"
+    # is the same test as "each term appears in title + path + text".
+    parts = (item.title_f, item.path_f, item.text_f)
+    return all(any(term in part for part in parts) for term in terms)
 
 
-def _snippet(text: str, terms: list[str]) -> str | None:
+def _window(text: str, start: int, end: int) -> str:
+    left = max(0, start - SNIPPET_RADIUS)
+    right = min(len(text), end + SNIPPET_RADIUS)
+    body = " ".join(text[left:right].split())
+    return ("…" if left > 0 else "") + body + ("…" if right < len(text) else "")
+
+
+def _snippet(item: Item, terms: list[str]) -> str | None:
+    """Context around the first term found in the item's body, or None when the body has no match.
+
+    Terms are located in the folded text. When folding kept the text's length, the same offset is
+    valid in the original, so the window shows the original spelling. When it did not ("ß" folds to
+    "ss"), the match is real but has no exact original position: the window then shows the start.
+    """
     for term in terms:
-        found = re.search(re.escape(term), text, re.IGNORECASE)
-        if found:
-            start = max(0, found.start() - SNIPPET_RADIUS)
-            end = min(len(text), found.end() + SNIPPET_RADIUS)
-            window = " ".join(text[start:end].split())
-            return ("…" if start > 0 else "") + window + ("…" if end < len(text) else "")
+        position = item.text_f.find(term)
+        if position < 0:
+            continue
+        if len(item.text_f) != len(item.text):
+            return _window(item.text, 0, 0)
+        return _window(item.text, position, position + len(term))
     return None
 
 
@@ -597,7 +591,12 @@ class SearchIndex:
 
     def _sync_locked(self) -> None:
         base = store.rendered_dir(self._data_dir)
-        names = _doc_dir_names(base)
+        try:
+            names = _doc_dir_names(base)
+        except OSError as exc:
+            sys.stderr.write(f"[md-review] search: cannot list {base}: {exc}; keeping the last index\n")
+            self._last_sync = self._clock()
+            return
         total = len(names)
         updated = dict(self._docs)
         skipped: dict[str, tuple] = {}
@@ -609,7 +608,12 @@ class SearchIndex:
             if known is None and self._skipped.get(name) == signature:
                 skipped[name] = signature
             elif known is None or known.signature != signature:
-                record = _build_record(doc_dir, name, signature)
+                try:
+                    record = _build_record(doc_dir, name, signature)
+                except OSError as exc:
+                    # One bad dir must not wedge the index. The signature is cached below, so this is logged once per change.
+                    sys.stderr.write(f"[md-review] search: skipped {name}: {exc}\n")
+                    record = None
                 if record is None:
                     updated.pop(name, None)
                     skipped[name] = signature
@@ -647,6 +651,7 @@ class SearchIndex:
         term_list = [term.casefold() for term in terms]
         selected = set(repos) if repos is not None else None
         snapshot = self._docs
+        progress = self._progress  # one read: a concurrent sync replaces the whole tuple
         names = {record.repo_key: record.repo_name for record in snapshot.values()}
         for key in selected or ():
             names.setdefault(key, "")
@@ -679,9 +684,9 @@ class SearchIndex:
 
         groups = []
         for record, doc_hit, children in hits[offset : offset + limit]:
-            doc_snippet = _snippet(record.doc_item.text, term_list) if doc_hit and term_list else None
+            doc_snippet = _snippet(record.doc_item, term_list) if doc_hit and term_list else None
             matches = [
-                _item_payload(child, _snippet(child.text, term_list)) for child in children[:MAX_MATCHES_PER_GROUP]
+                _item_payload(child, _snippet(child, term_list)) for child in children[:MAX_MATCHES_PER_GROUP]
             ]
             group = {"doc": _doc_payload(record, labels, doc_snippet), "matches": matches, "matchCount": len(children)}
             groups.append(group)
@@ -695,7 +700,7 @@ class SearchIndex:
             "facets": {
                 "repos": [{"key": key, "label": labels[key], "count": count} for key, count in facets],
             },
-            "indexing": {"done": self._progress[0], "total": self._progress[1]},
+            "indexing": {"done": progress[0], "total": progress[1]},
             "truncatedItems": truncated_items,
         }
 

@@ -129,5 +129,21 @@ class SearchRouteTests(ServerTestCase):
         self.assertIn("offset=1", text)
 
 
+    def test_rejected_search_is_not_cacheable(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(self.url("/api/search?sort=bogus"), timeout=10)
+        self.assertEqual(caught.exception.code, 400)
+        self.assertIn("no-store", caught.exception.headers.get("Cache-Control", ""))
+
+    def test_index_page_with_bad_state_returns_html_not_json(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(self.url("/?sort=<b>bogus</b>"), timeout=10)
+        self.assertEqual(caught.exception.code, 400)
+        self.assertIn("text/html", caught.exception.headers.get("Content-Type", ""))
+        body = caught.exception.read().decode("utf-8")
+        self.assertIn("sort must be one of", body)
+        self.assertNotIn("<b>bogus</b>", body)
+
+
 if __name__ == "__main__":
     unittest.main()

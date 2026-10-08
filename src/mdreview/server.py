@@ -972,7 +972,7 @@ pre.snapshot {{ white-space: pre-wrap; overflow-wrap: anywhere; font-family: var
                 offset=offset,
             )
         except search.QueryError as exc:
-            self._error(400, str(exc))
+            self._json({"error": str(exc)}, 400, no_store=True)
             return
         self._json(result, no_store=True)
 
@@ -1008,7 +1008,11 @@ pre.snapshot {{ white-space: pre-wrap; overflow-wrap: anywhere; font-family: var
                 offset=offset,
             )
         except search.QueryError as exc:
-            self._error(400, str(exc))
+            self._html(
+                "<!doctype html><html lang='en'><head><meta charset='utf-8'><title>md-review</title></head>"
+                f"<body><p>{html.escape(str(exc))}</p><p><a href='/'>Back to the index</a></p></body></html>",
+                400,
+            )
             return
         selected = set(repos)
         indexing = result["indexing"]

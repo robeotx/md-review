@@ -322,19 +322,19 @@ class SyncAndSearchTests(unittest.TestCase):
         blob = b"def close_out():\n    return 'ok'\n"
         sha = hashlib.sha256(blob).hexdigest()
         links = {
-            "abc123": {"target": "scripts/tools.py", "kind": "text", "docId": "x", "sha256": sha, "size": len(blob)}
+            "abcdef0123456789": {"target": "scripts/tools.py", "kind": "text", "docId": "x", "sha256": sha, "size": len(blob)}
         }
         self._doc("linked", "Linked", "t", "2026-10-01T00:00:00+00:00", links=links, blobs={sha: blob})
         self.index.sync()
         result = self.index.search(terms=["close_out"])
         match = result["groups"][0]["matches"][0]
-        self.assertEqual((match["kind"], match["ext"], match["url"]), ("file", "py", "/link/linked/abc123"))
+        self.assertEqual((match["kind"], match["ext"], match["url"]), ("file", "py", "/link/linked/abcdef0123456789"))
         self.assertEqual(self._ids(self.index.search(terms=["tools.py"])), ["linked"])
 
     def test_binary_or_oversized_capture_is_indexed_by_path_only(self) -> None:
         blob = b"\x89PNG\x00\x00binary"
         sha = hashlib.sha256(blob).hexdigest()
-        links = {"img1": {"target": "shots/hero.png", "kind": "image", "docId": "x", "sha256": sha, "size": len(blob)}}
+        links = {"1234567890abcdef": {"target": "shots/hero.png", "kind": "image", "docId": "x", "sha256": sha, "size": len(blob)}}
         self._doc("pics", "Pics", "t", "2026-10-01T00:00:00+00:00", links=links, blobs={sha: blob})
         self.index.sync()
         self.assertEqual(self._ids(self.index.search(terms=["hero"])), ["pics"])
@@ -443,6 +443,72 @@ class SyncAndSearchTests(unittest.TestCase):
         clock[0] += search.SYNC_INTERVAL_S
         index.maybe_sync()
         self.assertEqual(index.search()["total"], 2)
+
+
+class ReviewFindingTests(unittest.TestCase):
+    """Regression tests for findings from the Kimi K3 review of ec31319."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.data_dir = Path(self._tmp.name) / "data"
+        store.ensure_data_dir(self.data_dir)
+        self.index = search.SearchIndex(self.data_dir)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    @unittest.skipIf(os.name != "posix" or os.geteuid() == 0, "needs POSIX permissions and a non-root user")
+    def test_unreadable_doc_dir_is_skipped_and_the_rest_still_indexes(self) -> None:
+        _write_doc_dir(self.data_dir, "good-doc", title="Good", body_html=_article("findme text"), manifest=_manifest("Good", "2026-10-01T00:00:00+00:00"))
+        locked = _write_doc_dir(self.data_dir, "locked-doc", title="Locked", body_html=_article("hidden"), manifest=_manifest("Locked", "2026-10-01T00:00:00+00:00"))
+        os.chmod(locked, 0)
+        try:
+            self.index.sync()
+            self.index.sync()
+            result = self.index.search(terms=["findme"])
+            self.assertEqual(self._ids(result), ["good-doc"])
+            self.assertEqual(self.index.search()["indexing"], {"done": 2, "total": 2})
+        finally:
+            os.chmod(locked, 0o755)
+
+    def _ids(self, result: dict) -> list[str]:
+        return [group["doc"]["docId"] for group in result["groups"]]
+
+    def test_snippet_found_when_casefold_changes_length(self) -> None:
+        # casefold("weiß") == "weiss": the term matches the folded text but has no
+        # equal-length position in the original, so the snippet must still show context.
+        _write_doc_dir(self.data_dir, "sharp", title="Sharp", body_html=_article("weiß and more words"), manifest=_manifest("Sharp", "2026-10-01T00:00:00+00:00"))
+        self.index.sync()
+        doc = self.index.search(terms=["ss"])["groups"][0]["doc"]
+        self.assertIsNotNone(doc["snippet"])
+        self.assertIn("weiß", doc["snippet"])
+
+    def test_snippet_is_marked_position_in_original_text(self) -> None:
+        _write_doc_dir(self.data_dir, "plain", title="Plain", body_html=_article("ABC needle XYZ"), manifest=_manifest("Plain", "2026-10-01T00:00:00+00:00"))
+        self.index.sync()
+        doc = self.index.search(terms=["NEEDLE"])["groups"][0]["doc"]
+        self.assertIn("ABC needle XYZ", doc["snippet"])
+
+    def test_title_only_match_has_no_body_snippet(self) -> None:
+        _write_doc_dir(self.data_dir, "titled", title="Quartz Report", body_html=_article("unrelated body"), manifest=_manifest("Quartz Report", "2026-10-01T00:00:00+00:00"))
+        self.index.sync()
+        group = self.index.search(terms=["quartz"])["groups"][0]
+        self.assertEqual(group["doc"]["docId"], "titled")
+        self.assertIsNone(group["doc"]["snippet"])
+
+    def test_capture_keys_the_link_route_cannot_serve_are_not_indexed(self) -> None:
+        links_map = {"not-a-link-key": {"target": "zzfile.py", "kind": "text", "docId": "x", "sha256": "0" * 64, "size": 1}}
+        _write_doc_dir(self.data_dir, "odd-keys", title="Odd", body_html=_article("t"), manifest=_manifest("Odd", "2026-10-01T00:00:00+00:00"), links=links_map)
+        self.index.sync()
+        self.assertEqual(self.index.search(terms=["zzfile"])["total"], 0)
+
+    def test_matches_per_group_are_capped_with_true_count(self) -> None:
+        comments = [{"id": f"c{i}", "text": f"rewrite note {i}", "author": "reviewer", "quote": "", "resolved": False} for i in range(25)]
+        _write_doc_dir(self.data_dir, "chatty", title="Chatty", body_html=_article("body"), manifest=_manifest("Chatty", "2026-10-01T00:00:00+00:00"), comments=comments)
+        self.index.sync()
+        group = self.index.search(terms=["rewrite"])["groups"][0]
+        self.assertEqual(len(group["matches"]), search.MAX_MATCHES_PER_GROUP)
+        self.assertEqual(group["matchCount"], 25)
 
 
 if __name__ == "__main__":
