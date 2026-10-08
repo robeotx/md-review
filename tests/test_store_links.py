@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -233,6 +234,35 @@ class ReviewFindingsTests(unittest.TestCase):
         with mock.patch.object(store, "_atomic_write", fail_on_links), self.assertRaises(OSError):
             render(self.data, "[d](d.txt)\n", store.Captures(files={"docs/d.txt": b"2222"}, reasons={}))
         self.assertEqual([b"1111"], [p.read_bytes() for p in (page.parent / "files").iterdir()])
+
+    def _fail_writing(self, name: str):
+        real_write = store._atomic_write
+
+        def failing(path, content, **kwargs):
+            if path.name == name:
+                raise OSError("disk full")
+            return real_write(path, content, **kwargs)
+
+        return mock.patch.object(store, "_atomic_write", failing)
+
+    def test_failure_after_links_json_lands_prunes_the_old_blobs(self) -> None:
+        page = render(self.data, "[d](d.txt)\n", store.Captures(files={"docs/d.txt": b"1111"}, reasons={}))
+        with self._fail_writing("index.html"), self.assertRaises(OSError):
+            render(self.data, "[d](d.txt)\n", store.Captures(files={"docs/d.txt": b"2222"}, reasons={}))
+        # The new links.json is in charge, so only its blob may remain.
+        self.assertEqual([b"2222"], [p.read_bytes() for p in (page.parent / "files").iterdir()])
+
+    def test_failure_cleanup_never_deletes_a_blob_the_current_links_json_references(self) -> None:
+        caps = store.Captures(files={"docs/a.txt": b"AAAA", "docs/b.txt": b"BBBB"}, reasons={})
+        page = render(self.data, "[a](a.txt) [b](b.txt)\n", caps)
+        files = page.parent / "files"
+        a_blob = files / hashlib.sha256(b"AAAA").hexdigest()
+        a_blob.unlink()  # degraded store: referenced blob A missing
+        with self._fail_writing("links.json"), self.assertRaises(OSError):
+            render(self.data, "[a](a.txt)\n", store.Captures(files={"docs/a.txt": b"AAAA"}, reasons={}))
+        # The OLD links.json (A+B) is still current: the repaired A stays, B stays.
+        self.assertTrue(a_blob.exists())
+        self.assertTrue((files / hashlib.sha256(b"BBBB").hexdigest()).exists())
 
     def test_orphans_from_failed_renders_are_removed_and_never_credited(self) -> None:
         page = render(self.data, "[d](d.txt)\n", store.Captures(files={"docs/d.txt": b"1111"}, reasons={}))

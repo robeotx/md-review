@@ -192,10 +192,11 @@ def capture_file(path: Path, boundary: Path, identity: str) -> bytes:
 
 _FILE_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
 _CAN_WALK = os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY")
-# O_PATH (Linux) opens a directory for traversal with search (x) permission
-# alone, matching what a plain open() of the file needs; without it, an
-# execute-only ancestor would block capture that a direct read allows.
-_DIR_FLAGS = (getattr(os, "O_PATH", 0) or os.O_RDONLY) | getattr(os, "O_DIRECTORY", 0)
+# O_PATH (Linux) / O_SEARCH (where Python exposes it) open a directory for
+# traversal with search (x) permission alone, matching what a plain open() of
+# the file needs. Elsewhere O_RDONLY is used, so an execute-only ancestor
+# blocks capture there (fails closed: "could not be opened safely").
+_DIR_FLAGS = (getattr(os, "O_PATH", 0) or getattr(os, "O_SEARCH", 0) or os.O_RDONLY) | getattr(os, "O_DIRECTORY", 0)
 
 
 def _open_without_symlinks(resolved: Path) -> int:

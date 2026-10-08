@@ -631,6 +631,12 @@ class ReviewFindingsRendererTests(unittest.TestCase):
         toc = page.split('class="toc-l1"', 1)[1].split("</a>", 1)[0].split(">", 1)[1]
         self.assertEqual("Guide diagram", toc)
 
+    def test_toc_keeps_an_escaped_bang_before_a_link(self) -> None:
+        renderer = MarkdownRenderer()
+        page = page_html("T", "src.md", "doc-1", renderer.render("# Guide \\![report](r.md)\n"), [], renderer.toc)
+        toc = page.split('class="toc-l1"', 1)[1].split("</a>", 1)[0].split(">", 1)[1]
+        self.assertIn("!report", toc)
+
     def test_toc_keeps_code_spans_and_never_nests_links(self) -> None:
         for heading, expected in (("# Guide `[x](r.md)`\n", "[x](r.md)"), ("# Guide [a `]` b](r.md)\n", None)):
             renderer = MarkdownRenderer()

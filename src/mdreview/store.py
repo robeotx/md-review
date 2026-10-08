@@ -543,7 +543,6 @@ def render_payload(
         # Blobs first (content-addressed, so a reader of the OLD links.json
         # still finds its files), then links.json and the page; obsolete
         # blobs are removed only after nothing written here references them.
-        written: list[Path] = []
         try:
             if table.blobs:
                 files_dir.mkdir(exist_ok=True)
@@ -552,18 +551,14 @@ def render_payload(
                 for sha, data in table.blobs.items():
                     if sha not in stored:
                         _atomic_write(files_dir / sha, data)
-                        written.append(files_dir / sha)
             for path, data in encoded:
                 _atomic_write(path, data)
         except BaseException:
-            # A failure before the new links.json lands leaves the old one in
-            # charge: remove this render's new blobs so they can't sit
-            # unreferenced (and uncounted against intent) until the next render.
+            # Whichever links.json is on disk now (the old one, or the new one
+            # if the failure came after it) is the one in charge: drop every
+            # blob IT does not reference. Never touches a referenced blob.
             with contextlib.suppress(OSError):  # never mask the original failure
-                links_file = out_dir / "links.json"
-                if not links_file.exists() or encoded[0][1] != links_file.read_bytes():
-                    for blob in written:
-                        blob.unlink(missing_ok=True)
+                _prune_orphan_blobs(out_dir)
             raise
         if files_dir.is_dir():
             for blob in files_dir.iterdir():

@@ -122,7 +122,11 @@ Known edges:
   real file's review page.
 - Capture never follows a symlink that appears mid-capture on POSIX.
   Windows lacks the needed directory-handle API, so it falls back to a
-  single resolved open.
+  single resolved open. A folder you can pass through but not list (`0111`)
+  is traversed on Linux; elsewhere such a target shows as unavailable.
+- A render killed mid-write (e.g. `kill -9`) can leave a captured file
+  behind. It still counts toward the quota until that doc's next render
+  removes it.
 - The render lock that keeps a local render and the server from clobbering
   each other's captured files is POSIX-only.
 
