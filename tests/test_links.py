@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from mdreview import links
 
@@ -78,7 +79,7 @@ class DenyPolicyTests(unittest.TestCase):
         self.assertIsNone(links.secret_content_reason(b"# just notes\nnothing here"))
 
 
-class CaptureFileTests(unittest.TestCase):
+class TempRootCase(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name).resolve()
@@ -92,6 +93,8 @@ class CaptureFileTests(unittest.TestCase):
         path.write_bytes(data)
         return path
 
+
+class CaptureFileTests(TempRootCase):
     def test_captures_a_regular_text_file(self) -> None:
         self.write("docs/r.md", b"# hi\n")
         self.assertEqual(b"# hi\n", links.capture_file(self.root / "docs/r.md", self.root, "docs/r.md"))
@@ -135,6 +138,41 @@ class CaptureFileTests(unittest.TestCase):
         (self.root / "innocent.txt").symlink_to(self.root / ".aws/config")
         with self.assertRaises(links.Unavailable):
             links.capture_file(self.root / "innocent.txt", self.root, "innocent.txt")
+
+
+class CaptureReviewFindingsTests(TempRootCase):
+    """Regressions from the cross-model code review (2026-10-07)."""
+
+    def test_images_are_screened_for_secret_contents_too(self) -> None:
+        self.write("token.svg", b"<svg><metadata>ghp_" + b"a" * 36 + b"</metadata></svg>")
+        with self.assertRaisesRegex(links.Unavailable, "secret"):
+            links.capture_file(self.root / "token.svg", self.root, "token.svg")
+
+    @unittest.skipUnless(hasattr(os, "symlink") and os.name == "posix", "posix symlinks")
+    def test_symlink_loop_is_unavailable_not_a_crash(self) -> None:
+        (self.root / "loop.txt").symlink_to(self.root / "loop.txt")
+        with self.assertRaises(links.Unavailable):
+            links.capture_file(self.root / "loop.txt", self.root, "loop.txt")
+
+    @unittest.skipUnless(os.name == "posix", "posix openat walk")
+    def test_ancestor_swapped_for_a_symlink_after_resolution_is_refused(self) -> None:
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        (Path(outside.name) / "r.txt").write_bytes(b"outside")
+        self.write("docs/r.txt", b"inside")
+        real_resolve = Path.resolve
+
+        def swap_then_resolve(path: Path, *args, **kwargs) -> Path:
+            resolved = real_resolve(path, *args, **kwargs)
+            docs = self.root / "docs"
+            if docs.is_dir() and not docs.is_symlink():
+                (docs / "r.txt").unlink()
+                docs.rmdir()
+                docs.symlink_to(outside.name)
+            return resolved
+
+        with mock.patch.object(Path, "resolve", swap_then_resolve), self.assertRaises(links.Unavailable):
+            links.capture_file(self.root / "docs/r.txt", self.root, "docs/r.txt")
 
 
 if __name__ == "__main__":

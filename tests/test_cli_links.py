@@ -31,6 +31,15 @@ class LinksPayloadTests(unittest.TestCase):
         self.assertLessEqual(len(json.dumps({**base, "links": field}).encode()), 1000)
         self.assertNotIn("docs/big.txt", caps.files)  # the summary must reflect the drop
 
+    def test_reasons_are_bounded_so_the_server_never_rejects_the_render(self) -> None:
+        from mdreview import links
+
+        reasons = {f"docs/m{i}.txt": "file not found" for i in range(links.MAX_TARGETS + 50)}
+        caps = store.Captures(files={"docs/a.txt": b"a"}, reasons=reasons)
+        field = cli.links_payload(caps, {}, limit=10_000_000)
+        self.assertLessEqual(len(field["files"]) + len(field["reasons"]), links.MAX_TARGETS)
+        self.assertEqual(links.MAX_TARGETS + 50, len(caps.reasons))  # the local summary keeps them all
+
     def test_disabled_capture_ships_the_flag_only(self) -> None:
         self.assertEqual({"disabled": True}, cli.links_payload(store.Captures(disabled=True), {}, limit=100))
 

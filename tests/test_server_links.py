@@ -143,6 +143,10 @@ class RenderLinksFieldTests(LinkTestCase):
             )
             self.assertEqual(400, status, (bad, payload))
 
+    def test_excess_reasons_are_ignored_not_rejected(self) -> None:
+        reasons = {f"docs/m{i}.txt": "file not found" for i in range(links.MAX_TARGETS + 1)}
+        self.publish("docs/many.md", "[a](m0.txt)\n", reasons=reasons)  # asserts 201
+
     def test_render_route_accepts_bodies_over_the_general_cap(self) -> None:
         big = b"z" * (server.MAX_BODY_BYTES // 2)
         files = {f"docs/b{i}.txt": big for i in range(3)}  # ~6 MiB base64-ish, over the 4 MiB general cap

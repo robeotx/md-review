@@ -114,6 +114,18 @@ file, 8 MiB per document, 500 targets, 2 GiB across the store.
 GitHub-style heading fragments (`#install`) resolve too, within a doc and
 across docs.
 
+Known edges:
+
+- A fragment that is ALSO md-review's own id for a different heading goes
+  to md-review's heading. The outline links depend on those ids.
+- A link through a symlinked `.md` alias opens the captured copy, not the
+  real file's review page.
+- Capture never follows a symlink that appears mid-capture on POSIX.
+  Windows lacks the needed directory-handle API, so it falls back to a
+  single resolved open.
+- The render lock that keeps a local render and the server from clobbering
+  each other's captured files is POSIX-only.
+
 ### Commenting
 
 - **Block comments**: every block has a 💬 button on hover.

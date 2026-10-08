@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 
 from mdreview.renderer import LinkRendering, MarkdownRenderer, page_html
@@ -588,6 +589,41 @@ class LinkResolverTests(unittest.TestCase):
         ))
         body = self.render('![a"><script>alt</script>](x.png) [l](y.md)\n', resolver)
         self.assertNotIn("<script>", body)
+
+
+class ReviewFindingsRendererTests(unittest.TestCase):
+    """Regressions from the cross-model code review (2026-10-07)."""
+
+    @staticmethod
+    def resolver_with(rendering: LinkRendering):
+        def resolver(href: str, is_image: bool) -> LinkRendering:
+            return rendering
+
+        return resolver
+
+    def test_code_span_in_image_alt_becomes_plain_text(self) -> None:
+        r = self.resolver_with(LinkRendering(href="/link/d/k", css_class="md-link-local", title="p.png", image=True))
+        body = MarkdownRenderer(link_resolver=r).render("![a `code` b](p.png)\n")
+        self.assertIn('alt="a code b"', body)
+        self.assertNotIn("<code", body.split("<img", 1)[1].split(">", 1)[0])
+
+    def test_nul_placeholders_in_resolver_values_cannot_crash_or_inject(self) -> None:
+        r = self.resolver_with(LinkRendering(href="/link/d/k", css_class="md-link-unavailable", title="x \x00999\x00 y"))
+        body = MarkdownRenderer(link_resolver=r).render("[s](s.txt)\n")
+        self.assertNotIn("\x00", body)
+
+    def test_github_slugs_never_collide(self) -> None:
+        body = MarkdownRenderer().render("# Notes\n\n# Notes-1\n\n# Notes\n")
+        slugs = re.findall(r'data-slug="([^"]+)"', body)
+        self.assertEqual(["notes", "notes-1", "notes-2"], slugs)
+
+    def test_toc_labels_render_links_as_plain_text(self) -> None:
+        renderer = MarkdownRenderer()
+        body = renderer.render("# Guide [report](r.md)\n")
+        page = page_html("T", "src.md", "doc-1", body, [], renderer.toc)
+        toc = page.split('class="toc-l1"', 1)[1].split("</a>", 1)[0]
+        self.assertNotIn("href", toc.split(">", 1)[1])
+        self.assertIn("Guide report", toc)
 
 
 if __name__ == "__main__":

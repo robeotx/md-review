@@ -150,7 +150,10 @@ def capture_file(path: Path, boundary: Path, identity: str) -> bytes:
     reason = denied_reason(identity)
     if reason:
         raise Unavailable(reason)
-    resolved = path.resolve()
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError):  # symlink loop (RuntimeError before Python 3.13)
+        raise Unavailable("symlink loop or unreadable path") from None
     try:
         inside = resolved.relative_to(boundary).as_posix()
     except ValueError:
@@ -159,23 +162,23 @@ def capture_file(path: Path, boundary: Path, identity: str) -> bytes:
     if reason:
         raise Unavailable(reason)
     try:
-        st = os.stat(resolved)
-    except OSError:
+        fd = _open_beneath(boundary, inside)
+    except FileNotFoundError:
         raise Unavailable("file not found") from None
-    if not stat.S_ISREG(st.st_mode):
-        raise Unavailable("not a regular file")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
-    try:
-        fd = os.open(resolved, flags)
     except OSError:
-        raise Unavailable("file could not be opened") from None
+        # ELOOP/ENOTDIR here means a component became a symlink after it was
+        # resolved — capture refuses rather than following it anywhere.
+        raise Unavailable("file could not be opened safely") from None
+    if not stat.S_ISREG(os.fstat(fd).st_mode):  # before fdopen, which refuses directories itself
+        os.close(fd)
+        raise Unavailable("not a regular file")
     with os.fdopen(fd, "rb") as fh:
-        opened = os.fstat(fh.fileno())
-        if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (st.st_dev, st.st_ino):
-            raise Unavailable("file changed while being captured")
         data = fh.read(MAX_FILE_BYTES + 1)
     if len(data) > MAX_FILE_BYTES:
         raise Unavailable(f"too large (over {MAX_FILE_BYTES // (1024 * 1024)} MiB)")
+    reason = secret_content_reason(data)  # images too: SVG is text, and metadata can carry tokens
+    if reason:
+        raise Unavailable(reason)
     if kind_for(identity) == "image":
         return data
     if b"\x00" in data:
@@ -184,7 +187,31 @@ def capture_file(path: Path, boundary: Path, identity: str) -> bytes:
         data.decode("utf-8")
     except UnicodeDecodeError:
         raise Unavailable("binary file") from None
-    reason = secret_content_reason(data)
-    if reason:
-        raise Unavailable(reason)
     return data
+
+
+_FILE_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+_CAN_WALK = os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY")
+
+
+def _open_beneath(boundary: Path, inside: str) -> int:
+    """Open ``boundary/inside`` without following a symlink at ANY level below
+    ``boundary``: each directory is opened relative to its parent's descriptor
+    with O_NOFOLLOW, so swapping an ancestor for a symlink after ``resolve()``
+    cannot redirect the read. ``inside`` is already symlink-free (resolved).
+    O_NONBLOCK keeps a FIFO from hanging the open; the caller rejects it.
+    Platforms without dir_fd support (Windows) fall back to one plain open."""
+    if not _CAN_WALK:
+        return os.open(boundary / inside, _FILE_FLAGS)
+    parts = [part for part in inside.split("/") if part]
+    if not parts:
+        raise IsADirectoryError(inside)
+    dir_fd = os.open(boundary, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts[:-1]:
+            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+            os.close(dir_fd)
+            dir_fd = next_fd
+        return os.open(parts[-1], _FILE_FLAGS, dir_fd=dir_fd)
+    finally:
+        os.close(dir_fd)

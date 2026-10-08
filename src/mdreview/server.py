@@ -1092,8 +1092,8 @@ def parse_links_field(raw: object) -> store.Captures | None:
     files_raw, reasons_raw = raw.get("files", {}), raw.get("reasons", {})
     if not isinstance(files_raw, dict) or not isinstance(reasons_raw, dict):
         raise ValueError("links.files and links.reasons must be JSON objects")
-    if len(files_raw) > links.MAX_TARGETS or len(reasons_raw) > links.MAX_TARGETS:
-        raise ValueError(f"links may describe at most {links.MAX_TARGETS} targets")
+    if len(files_raw) > links.MAX_TARGETS:
+        raise ValueError(f"links may carry at most {links.MAX_TARGETS} files")
     captures = store.Captures()
     for target, encoded in files_raw.items():
         if len(target) > MAX_SOURCE_PATH_LENGTH or not isinstance(encoded, str):
@@ -1102,7 +1102,9 @@ def parse_links_field(raw: object) -> store.Captures | None:
             captures.files[target] = base64.b64decode(encoded, validate=True)
         except (binascii.Error, ValueError):
             raise ValueError(f"links.files[{target[:80]!r}] is not valid base64") from None
-    for target, reason in reasons_raw.items():
+    # Excess skip reasons are dropped, not rejected: the render itself marks
+    # any target it has no reason for, so a long skip list must not fail it.
+    for target, reason in list(reasons_raw.items())[: links.MAX_TARGETS]:
         if len(target) > MAX_SOURCE_PATH_LENGTH or not isinstance(reason, str):
             raise ValueError("links.reasons maps a target path to a reason string")
         captures.reasons[target] = reason[: store.MAX_LINK_REASON_LENGTH]

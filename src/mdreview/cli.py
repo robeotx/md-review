@@ -36,7 +36,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import __version__, store
+from . import __version__, links, store
 from .provenance import collect_provenance
 from .server import MAX_RENDER_BODY_BYTES, THEMES, resolve_ds_dir, resolve_theme, serve
 
@@ -175,7 +175,10 @@ def links_payload(captures: store.Captures, base_payload: dict, *, limit: int) -
 
     def field() -> dict:
         encoded = {k: base64.b64encode(v).decode("ascii") for k, v in captures.files.items()}
-        return {"files": encoded, "reasons": dict(captures.reasons)}
+        # The server describes at most MAX_TARGETS targets per doc; skips past
+        # that stay in the local summary (the server marks them itself).
+        room = max(0, links.MAX_TARGETS - len(encoded))
+        return {"files": encoded, "reasons": dict(list(captures.reasons.items())[:room])}
 
     while True:
         candidate = field()

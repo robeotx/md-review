@@ -129,7 +129,15 @@ _LINK_RESOLVER: ContextVar[LinkResolver | None] = ContextVar("md_link_resolver",
 def _attr(value: str) -> str:
     # Attribute values are emitted BEFORE the emphasis regexes run over the
     # line, so a literal `*` would let `*x*` grow <em> tags inside the value.
-    return html.escape(value, quote=True).replace("*", "&#42;")
+    # NULs are dropped: \x00N\x00 is render_inline's code-span placeholder,
+    # and a resolver value must never be read back as one.
+    return html.escape(value.replace("\x00", ""), quote=True).replace("*", "&#42;")
+
+
+def _unlink(text: str) -> str:
+    """Links and images reduced to their label: for outline entries, which are
+    themselves links (nesting <a> is invalid) and render outside any resolver."""
+    return re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)
 
 
 def render_inline(text: str) -> str:
@@ -145,6 +153,7 @@ def render_inline(text: str) -> str:
     # a bold run (or a link, in principle) can span across a code span exactly
     # as GFM treats the span as one opaque inline atom.
     code_spans: list[str] = []
+    code_text: list[str] = []  # the same spans as plain text, for attribute values
 
     def stash_code(match: re.Match[str]) -> str:
         # Strict CommonMark leaves backslashes literal inside code spans (escape
@@ -157,6 +166,7 @@ def render_inline(text: str) -> str:
         # carving out a code-span exception.
         content = match.group(1).replace("\\|", "|")
         code_spans.append(f'<code class="md-inline-code">{html.escape(content)}</code>')
+        code_text.append(content)
         return f"\x00{len(code_spans) - 1}\x00"
 
     placeheld = re.sub(r"`([^`]*)`", stash_code, text)
@@ -199,7 +209,10 @@ def render_inline(text: str) -> str:
             return f'{bang}<a href="{html.escape(raw_href, quote=True)}">{label}</a>'
         opening = f'<a class="{_attr(rendering.css_class)}" href="{_attr(rendering.href)}" title="{_attr(rendering.title)}">'
         if bang and rendering.image:
-            alt = _attr(html.unescape(label))
+            # A code span in alt text must become its plain text here: restored
+            # later as <code class="…">, its quotes would break the attribute.
+            alt_text = re.sub(r"\x00(\d+)\x00", lambda m: code_text[int(m.group(1))], html.unescape(label))
+            alt = _attr(alt_text)
             return f'{opening}<img src="{_attr(rendering.href.partition("#")[0])}" alt="{alt}" loading="lazy"></a>'
         mark = ""
         if rendering.css_class == "md-link-unavailable":
@@ -211,7 +224,8 @@ def render_inline(text: str) -> str:
     escaped = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", escaped)
 
     def restore_code(match: re.Match[str]) -> str:
-        return code_spans[int(match.group(1))]
+        index = int(match.group(1))
+        return code_spans[index] if index < len(code_spans) else ""
 
     return re.sub(r"\x00(\d+)\x00", restore_code, escaped)
 
@@ -289,11 +303,16 @@ class MarkdownRenderer:
         return base if self.heading_slugs[base] == 1 else f"{base}-{self.heading_slugs[base]}"
 
     def github_heading_slug(self, text: str) -> str:
-        # GitHub numbers repeats from 1: notes, notes-1, notes-2.
+        # github-slugger's algorithm: repeats get -1, -2, … and a generated
+        # suffix that collides with a real heading's slug keeps counting, so
+        # `Notes`, `Notes-1`, `Notes` yield notes, notes-1, notes-2.
         base = github_slug(text)
-        seen = self.github_slugs.get(base, 0)
-        self.github_slugs[base] = seen + 1
-        return base if seen == 0 else f"{base}-{seen}"
+        slug = base
+        while slug in self.github_slugs:
+            self.github_slugs[base] += 1
+            slug = f"{base}-{self.github_slugs[base]}"
+        self.github_slugs[slug] = 0
+        return slug
 
     def render(self, markdown: str) -> str:
         token = _LINK_RESOLVER.set(self.link_resolver)
@@ -606,7 +625,7 @@ def page_html(
     else:
         subtitle = source_path
     toc_html = "\n".join(
-        f'<a class="toc-l{int(item["level"])}" href="#{escape_attr(item["id"])}">{render_inline(item["text"])}</a>'
+        f'<a class="toc-l{int(item["level"])}" href="#{escape_attr(item["id"])}">{render_inline(_unlink(item["text"]))}</a>'
         for item in toc
     )
     # json.dumps output is valid JSON but NOT safe <script>-element text: a

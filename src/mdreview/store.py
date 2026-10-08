@@ -18,11 +18,12 @@ this layout.
 Concurrency model: ONE module-level lock serializes every store mutation
 (render + comment add/resolve). Renders take well under a second, so a
 single lock is simpler and strictly safer than per-doc locks that would have
-to compose (render also touches comments.json initialization). Cross-
-PROCESS safety is best-effort: unique tmp names prevent temp-file
-interleaving, but two servers pointed at one data dir can still lose
-updates — one server per data dir is the supported deployment (documented
-in the README).
+to compose (render also touches comments.json initialization). Renders
+also take a cross-PROCESS file lock (POSIX), because a local render and the
+server commonly share one store. Other cross-process safety is best-effort:
+unique tmp names prevent temp-file interleaving, but two servers pointed at
+one data dir can still lose comment updates — one server per data dir is
+the supported deployment (documented in the README).
 """
 
 from __future__ import annotations
@@ -35,10 +36,16 @@ import posixpath
 import re
 import threading
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
 
 from . import links
 from .provenance import collect_provenance, normalize_provenance
@@ -48,6 +55,25 @@ ENV_DATA_DIR = "MD_REVIEW_DATA_DIR"
 
 # One lock for every store mutation; see the module docstring.
 _store_lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def _store_file_lock(data_dir: Path) -> Iterator[None]:
+    """Cross-PROCESS render lock. The server and a local ``md-review render``
+    routinely share one store, and a render's blob cleanup must never run
+    against another process's newer render of the same doc (it would delete
+    files the current links.json references). POSIX flock; a no-op where
+    fcntl does not exist (Windows), where cross-process renders stay
+    best-effort as before."""
+    if fcntl is None:
+        yield
+        return
+    with (data_dir / ".render.lock").open("a") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 # A doc id is a slug plus a short content hash of the document's identity;
 # only these characters ever appear, which is what makes the URL routes and
@@ -126,11 +152,9 @@ def capture_links(markdown: str, source_display: str, repo_root: Path | None) ->
     return captures
 
 
-def _attachment_bytes(data_dir: Path, exclude_doc_id: str) -> int:
+def _attachment_bytes(data_dir: Path) -> int:
     total = 0
     for files_dir in rendered_dir(data_dir).glob("*/files"):
-        if files_dir.parent.name == exclude_doc_id:
-            continue
         for blob in files_dir.iterdir():
             with contextlib.suppress(OSError):  # removed by a concurrent re-render
                 total += blob.stat().st_size
@@ -143,7 +167,17 @@ class _LinkTable:
     file BYTES for identities this render itself found: kinds, MIME types and
     doc ids are all derived here."""
 
-    def __init__(self, *, source_path: str, namespace: str, doc_id: str, captures: Captures | None, quota_room: int):
+    def __init__(
+        self,
+        *,
+        source_path: str,
+        namespace: str,
+        doc_id: str,
+        captures: Captures | None,
+        quota_room: int,
+        already_stored: set[str],
+    ):
+        self.already_stored = already_stored
         self.source_path = source_path
         self.in_repo = links.is_repo_relative(source_path)
         self.namespace = namespace
@@ -199,15 +233,17 @@ class _LinkTable:
                 reason = f"too large (over {links.MAX_FILE_BYTES // (1024 * 1024)} MiB)"
             elif self.captured_total + len(data) > links.MAX_DOC_CAPTURE_BYTES:
                 reason = PER_DOC_REASON
-            elif len(data) > self.quota_room:
-                reason = "not captured (server storage limit reached)"
             else:
                 sha = hashlib.sha256(data).hexdigest()
-                self.blobs[sha] = data
-                self.captured_total += len(data)
-                self.quota_room -= len(data)
-                entry.update(sha256=sha, size=len(data))
-                return entry
+                charge = 0 if sha in self.already_stored or sha in self.blobs else len(data)
+                if charge > self.quota_room:
+                    reason = "not captured (server storage limit reached)"
+                else:
+                    self.blobs[sha] = data
+                    self.captured_total += len(data)
+                    self.quota_room -= charge
+                    entry.update(sha256=sha, size=len(data))
+                    return entry
         elif captures is None:
             reason = NO_CAPTURE_REASON
         elif captures.disabled:
@@ -397,7 +433,7 @@ def render_payload(
     publisher that captures nothing (doc links still resolve by id)."""
     provenance = normalize_provenance(provenance, keep=("receivedFrom", "receivedAt"))
     ensure_data_dir(data_dir)
-    with _store_lock:
+    with _store_lock, _store_file_lock(data_dir):
         out_dir = rendered_dir(data_dir) / doc_id
         out_dir.mkdir(parents=True, exist_ok=True)
         if os.name == "posix":  # chmod is a documented no-op on Windows
@@ -412,27 +448,21 @@ def render_payload(
                 os.chmod(comments_file, 0o600)
         except FileExistsError:
             pass
+        files_dir = out_dir / "files"
+        stored = {p.name for p in files_dir.iterdir() if SHA256_RE.match(p.name)} if files_dir.is_dir() else set()
+        # The quota counts EVERY stored blob, this doc's included, and only
+        # bytes not already stored are charged — so neither failed renders
+        # nor re-renders can ratchet the store past the ceiling.
         table = _LinkTable(
             source_path=source_path,
             namespace=doc_namespace(provenance),
             doc_id=doc_id,
             captures=captures,
-            quota_room=max(0, STORE_ATTACHMENT_QUOTA - _attachment_bytes(data_dir, doc_id)),
+            quota_room=max(0, STORE_ATTACHMENT_QUOTA - _attachment_bytes(data_dir)),
+            already_stored=stored,
         )
         renderer = MarkdownRenderer(link_resolver=table.resolve)
         body = renderer.render(markdown)
-        # Blobs first (content-addressed, so a reader of the OLD links.json
-        # still finds its files), then links.json, then the page; obsolete
-        # blobs are removed only after nothing written here references them.
-        files_dir = out_dir / "files"
-        if table.blobs:
-            files_dir.mkdir(exist_ok=True)
-            if os.name == "posix":
-                os.chmod(files_dir, 0o700)
-            for sha, data in table.blobs.items():
-                if not (files_dir / sha).exists():
-                    _atomic_write(files_dir / sha, data)
-        _atomic_write(out_dir / "links.json", json.dumps(table.entries, indent=2, ensure_ascii=False) + "\n")
 
         now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
         created_at = now_iso
@@ -472,12 +502,27 @@ def render_payload(
             renderer.toc,
             provenance=manifest["provenance"],
         )
-        _atomic_write(out_dir / "index.html", page)
-        _atomic_write(
-            out_dir / "anchors.json",
-            json.dumps([a.as_json() for a in renderer.anchors], indent=2, ensure_ascii=False) + "\n",
-        )
-        _atomic_write(manifest_file, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+        # Encode everything BEFORE writing anything: an unencodable value (a
+        # lone surrogate in a title) must fail the render with nothing on disk.
+        outputs = [
+            (out_dir / "links.json", json.dumps(table.entries, indent=2, ensure_ascii=False) + "\n"),
+            (out_dir / "index.html", page),
+            (out_dir / "anchors.json", json.dumps([a.as_json() for a in renderer.anchors], indent=2, ensure_ascii=False) + "\n"),
+            (manifest_file, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"),
+        ]
+        encoded = [(path, text.encode("utf-8")) for path, text in outputs]
+        # Blobs first (content-addressed, so a reader of the OLD links.json
+        # still finds its files), then links.json and the page; obsolete
+        # blobs are removed only after nothing written here references them.
+        if table.blobs:
+            files_dir.mkdir(exist_ok=True)
+            if os.name == "posix":
+                os.chmod(files_dir, 0o700)
+            for sha, data in table.blobs.items():
+                if sha not in stored:
+                    _atomic_write(files_dir / sha, data)
+        for path, data in encoded:
+            _atomic_write(path, data)
         if files_dir.is_dir():
             for blob in files_dir.iterdir():
                 if SHA256_RE.match(blob.name) and blob.name not in table.blobs:
@@ -572,7 +617,12 @@ def find_published_doc(entry: dict, source_doc_id: str, data_dir: Path) -> str |
         prov = manifest.get("provenance")
         if not isinstance(prov, dict):
             continue
-        if (remote and prov.get("sourceRepoRemote") == remote) or (root and prov.get("sourceRepoRoot") == root):
+        other_remote = prov.get("sourceRepoRemote") or ""
+        if remote and other_remote:
+            same_repo = other_remote == remote  # two known remotes decide it; a shared root path never overrides
+        else:
+            same_repo = bool(root) and prov.get("sourceRepoRoot") == root
+        if same_repo:
             matches.append(manifest_file.parent.name)
     return matches[0] if len(matches) == 1 else None
 

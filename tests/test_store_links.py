@@ -177,5 +177,60 @@ class RenderDocumentCaptureTests(unittest.TestCase):
             self.assertEqual("capture turned off by the publisher", by_target(page)["docs/note.txt"]["reason"])
 
 
+class ReviewFindingsTests(unittest.TestCase):
+    """Regressions from the cross-model code review (2026-10-07)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.data = Path(self.tmp.name) / "data"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_failed_render_writes_no_blobs(self) -> None:
+        with self.assertRaises(UnicodeEncodeError):
+            store.render_payload(
+                markdown="[d](d.txt)\n",
+                source_path="docs/plan.md",
+                doc_id="docs-plan-x",
+                title="\ud800",  # unencodable: the page write must fail BEFORE any blob lands
+                data_dir=self.data,
+                provenance=dict(REPO_PROV),
+                captures=store.Captures(files={"docs/d.txt": b"data"}, reasons={}),
+            )
+        self.assertEqual([], list((self.data / "rendered").glob("*/files/*")))
+
+    def test_quota_counts_the_documents_own_existing_blobs(self) -> None:
+        with mock.patch.object(store, "STORE_ATTACHMENT_QUOTA", 6):
+            render(self.data, "[d](d.txt)\n", store.Captures(files={"docs/d.txt": b"1111"}, reasons={}))
+            page = render(self.data, "[d](d.txt)\n", store.Captures(files={"docs/d.txt": b"2222"}, reasons={}))
+        # 4 stored + 4 new > 6: the replacement is refused rather than over-filling the store.
+        self.assertIn("storage limit", by_target(page)["docs/d.txt"]["reason"])
+
+    def test_namespace_drift_never_crosses_repos_with_different_remotes(self) -> None:
+        def publish(source: str, remote: str, markdown: str) -> Path:
+            prov = {"sourceRepoRoot": "/workspace/project", "sourceRepoRemote": remote}
+            return store.render_payload(
+                markdown=markdown,
+                source_path=source,
+                doc_id=store.doc_id_for(source, store.doc_namespace(prov)),
+                title="t",
+                data_dir=self.data,
+                provenance=prov,
+            )
+
+        publish("docs/b.md", "https://e.com/other.git", "# B\n")
+        source = publish("docs/a.md", "https://e.com/mine.git", "[b](b.md)\n")
+        entry = next(iter(entries(source).values()))
+        self.assertIsNone(store.find_published_doc(entry, source.parent.name, self.data))
+
+    def test_render_and_gc_hold_a_cross_process_store_lock(self) -> None:
+        if not hasattr(store, "_store_file_lock"):
+            self.fail("render_payload must take a cross-process lock")
+        with mock.patch.object(store, "_store_file_lock", wraps=store._store_file_lock) as lock:
+            render(self.data, "# x\n", None)
+        lock.assert_called_once()
+
+
 if __name__ == "__main__":
     raise SystemExit(unittest.main())
