@@ -496,6 +496,84 @@ def doc_dir_for_id(doc_id: str, data_dir: Path) -> Path:
     return path
 
 
+def _read_json_dict(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def load_manifest(doc_id: str, data_dir: Path) -> dict | None:
+    try:
+        return _read_json_dict(doc_dir_for_id(doc_id, data_dir) / "manifest.json")
+    except (ValueError, FileNotFoundError):
+        return None
+
+
+def load_link(doc_id: str, key: str, data_dir: Path) -> tuple[dict, bytes | None] | None:
+    """A links.json entry and its captured bytes (None when nothing was captured).
+
+    A re-render can delete a blob between this read of links.json and the
+    open of the file. The new links.json is always written BEFORE obsolete
+    blobs are removed, so re-reading the entry once is enough.
+    """
+    try:
+        doc_dir = doc_dir_for_id(doc_id, data_dir)
+    except (ValueError, FileNotFoundError):
+        return None
+    entry: object = None
+    for _attempt in range(2):
+        entry = (_read_json_dict(doc_dir / "links.json") or {}).get(key)
+        if not isinstance(entry, dict):
+            return None
+        sha = entry.get("sha256")
+        if not (isinstance(sha, str) and SHA256_RE.match(sha)):
+            return entry, None
+        try:
+            return entry, (doc_dir / "files" / sha).read_bytes()
+        except FileNotFoundError:
+            continue
+    return (entry, None) if isinstance(entry, dict) else None
+
+
+def find_published_doc(entry: dict, source_doc_id: str, data_dir: Path) -> str | None:
+    """The published review page a doc link should open, if any.
+
+    First the computed id. If that misses, the target may have been rendered
+    under a different namespace (e.g. before the repo had a remote): accept a
+    doc with the same source path from the same repo (equal remote or equal
+    root), but only when exactly one matches — never guess between two.
+    """
+    target_id = entry.get("docId")
+    if (
+        isinstance(target_id, str)
+        and DOC_ID_RE.match(target_id)
+        and (rendered_dir(data_dir) / target_id / "index.html").is_file()
+    ):
+        return target_id
+    target = entry.get("target")
+    source = load_manifest(source_doc_id, data_dir)
+    source_prov = source.get("provenance") if source else None
+    if not isinstance(target, str) or not isinstance(source_prov, dict):
+        return None
+    remote = source_prov.get("sourceRepoRemote") or ""
+    root = source_prov.get("sourceRepoRoot") or ""
+    if not (remote or root):
+        return None
+    matches = []
+    for manifest_file in rendered_dir(data_dir).glob("*/manifest.json"):
+        manifest = _read_json_dict(manifest_file)
+        if not manifest or manifest.get("sourcePath") != target:
+            continue
+        prov = manifest.get("provenance")
+        if not isinstance(prov, dict):
+            continue
+        if (remote and prov.get("sourceRepoRemote") == remote) or (root and prov.get("sourceRepoRoot") == root):
+            matches.append(manifest_file.parent.name)
+    return matches[0] if len(matches) == 1 else None
+
+
 def comments_path(doc_id: str, data_dir: Path) -> Path:
     path = doc_dir_for_id(doc_id, data_dir) / "comments.json"
     if not path.exists():

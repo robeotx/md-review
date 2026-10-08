@@ -47,6 +47,8 @@ Routes
 
 from __future__ import annotations
 
+import base64
+import binascii
 import html
 import ipaddress
 import json
@@ -62,7 +64,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import __version__, store
+from . import __version__, links, store
 from .provenance import normalize_provenance
 from .store import (
     DOC_ID_RE,
@@ -107,6 +109,15 @@ MAX_TITLE_LENGTH = 300
 # Document-count ceiling: the per-render byte caps alone still allow death
 # by a thousand cuts.
 MAX_DOCUMENTS = 2_000
+# /api/render alone may carry the publisher's captured linked files (base64),
+# so its body ceiling is higher than MAX_BODY_BYTES. Only ONE render over the
+# general ceiling runs at a time, so concurrent uploads cannot multiply into
+# a memory flood (64 connections x 16 MiB would otherwise be 1 GiB).
+MAX_RENDER_BODY_BYTES = 16 * 1024 * 1024
+LINK_ROUTE_RE = re.compile(r"^/link/([^/]+)/([0-9a-f]{16})$")
+# A captured SVG opened directly is a document of its own: no script, no
+# network, no forms — only its inline styles and embedded data images.
+SVG_SANDBOX_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
 
 # The explicit LAN allowlist. Deliberately NOT ipaddress.is_private: that
 # predicate's meaning has changed across CPython releases (TEST-NETs,
@@ -224,6 +235,31 @@ def resolve_theme(explicit: str | None = None) -> str:
     return value
 
 
+# Theme bootstrap shared by every server-built page (the index and the /link
+# pages); rendered doc pages carry their own copy (renderer.py) — keep in sync.
+_THEME_BOOTSTRAP_JS = """// ---- theme bootstrap (FOUC guard) --------------------------------------
+// Same script the doc pages carry — keep the two in sync. Runs BEFORE the
+// stylesheet below is fetched, so data-theme is settled before first paint
+// (no light-flash on dark setups). Precedence: per-device override
+// (localStorage mdReviewTheme) > server default (data-theme on <html>) >
+// OS preference (prefers-color-scheme is binary, so OS dark maps to "dark"
+// — Warm Chalkboard; "dusk" is a mid-tone opt-in via the toggle or
+// --theme dusk).
+(() => {
+  const root = document.documentElement;
+  let stored = null;
+  try { stored = localStorage.getItem('mdReviewTheme'); } catch (err) { stored = null; }
+  if (stored === 'light' || stored === 'dusk' || stored === 'dark') {
+    root.setAttribute('data-theme', stored);
+    return;
+  }
+  if (root.hasAttribute('data-theme')) return;  // server pinned a default
+  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    root.setAttribute('data-theme', 'dark');
+  }
+})();"""
+
+
 class ReviewServer(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
@@ -246,6 +282,7 @@ class ReviewServer(ThreadingHTTPServer):
         self.extra_host_names = extra_host_names
         self.theme = theme
         self._connection_slots = threading.BoundedSemaphore(MAX_CONCURRENT_CONNECTIONS)
+        self.large_render_slot = threading.BoundedSemaphore(1)
 
     def verify_request(self, request, client_address) -> bool:
         # First and strongest gate: drop non-LAN peers before a single byte of
@@ -362,7 +399,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
             return True
         return False
 
-    def _read_json_body(self) -> object | None:
+    def _read_json_body(self, max_bytes: int = MAX_BODY_BYTES) -> object | None:
         """Parse the JSON body. Framing rules (chatty, and fatal to the
         connection so undrained bytes can never poison the NEXT request on a
         keep-alive socket):
@@ -379,9 +416,9 @@ class ReviewHandler(BaseHTTPRequestHandler):
         if length <= 0:
             self.close_connection = True
             raise FramingError("POST requires a Content-Length header")
-        if length > MAX_BODY_BYTES:
+        if length > max_bytes:
             self.close_connection = True
-            raise PayloadTooLargeError(f"request body exceeds {MAX_BODY_BYTES} bytes")
+            raise PayloadTooLargeError(f"request body exceeds {max_bytes} bytes")
         try:
             return json.loads(self.rfile.read(length).decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -436,6 +473,9 @@ class ReviewHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/rendered/"):
             self._serve_rendered_file(path)
+            return
+        if path.startswith("/link/"):
+            self._serve_link(path, parsed.query)
             return
         self._error(404, f"unknown route: {path}")
 
@@ -559,7 +599,9 @@ class ReviewHandler(BaseHTTPRequestHandler):
         # (a re-render landing between the two used to desync keep-alive).
         self._send_content(target.read_bytes(), content_type, no_store=no_store)
 
-    def _send_content(self, content: bytes, content_type: str, *, no_store: bool = False) -> None:
+    def _send_content(
+        self, content: bytes, content_type: str, *, no_store: bool = False, csp: str | None = None
+    ) -> None:
         # Split from _send_file so callers that transform bytes on the way
         # out (the doc-page theme stamp) share one response path — headers,
         # HEAD suppression, and framing stay identical.
@@ -567,6 +609,8 @@ class ReviewHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(content)))
         self.send_header("X-Content-Type-Options", "nosniff")
+        if csp:
+            self.send_header("Content-Security-Policy", csp)
         self._security_headers(page=content_type.startswith("text/html"))
         if no_store:
             self.send_header("Cache-Control", "no-store")
@@ -708,9 +752,28 @@ class ReviewHandler(BaseHTTPRequestHandler):
         normalized to the fixed schema (explicit nulls, strings only) before
         storage, and the server adds its own receipt stamp without
         overwriting the client's fields.
+
+        A body over the general ceiling (captured linked files) needs the
+        single large-render slot, taken BEFORE the body is read.
         """
         try:
-            body = self._read_json_body()
+            declared = int(self.headers.get("Content-Length") or "0")
+        except ValueError:
+            declared = 0  # _read_json_body rejects it with the precise error
+        if declared <= MAX_BODY_BYTES:
+            self._post_render_body()
+            return
+        if not self.server.large_render_slot.acquire(blocking=False):
+            self._reject(503, "another large render is in progress; retry shortly")
+            return
+        try:
+            self._post_render_body()
+        finally:
+            self.server.large_render_slot.release()
+
+    def _post_render_body(self) -> None:
+        try:
+            body = self._read_json_body(MAX_RENDER_BODY_BYTES)
         except FramingError as exc:
             self._error(411, str(exc))
             return
@@ -742,6 +805,11 @@ class ReviewHandler(BaseHTTPRequestHandler):
         if not isinstance(title, str) or not title.strip():
             title = re.sub(r"\.md$", "", filename, flags=re.IGNORECASE).replace("-", " ")
         title = title.strip()[:MAX_TITLE_LENGTH]
+        try:
+            captures = parse_links_field(body.get("links"))
+        except ValueError as exc:
+            self._error(400, str(exc))
+            return
         provenance = normalize_provenance(body.get("provenance"))
         provenance["receivedFrom"] = self.client_address[0]
         provenance["receivedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -759,6 +827,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
                 title=title,
                 data_dir=self.data_dir,
                 provenance=provenance,
+                captures=captures,
             )
         except (OSError, ValueError) as exc:
             # Full detail (which contains server-local paths) goes to the
@@ -767,6 +836,114 @@ class ReviewHandler(BaseHTTPRequestHandler):
             self._error(500, f"render failed for docId '{doc_id}'; see the server log for detail")
             return
         self._json({"docId": doc_id, "url": f"/rendered/{doc_id}/index.html", "title": title}, 201)
+
+    # -- relative links (see links.py) ---------------------------------------
+
+    def _serve_link(self, path: str, query: str) -> None:
+        """Follow a rewritten relative link. Decided at CLICK time, so a target
+        published after the linking doc still opens its review page. Every
+        byte served comes from the store (published pages, or files the
+        publisher captured) — never from a path on this machine."""
+        match = LINK_ROUTE_RE.match(path)
+        if not match:
+            self._link_page(404, "No such link", "<p>This link address is malformed.</p>")
+            return
+        doc_id, key = unquote(match.group(1)), match.group(2)
+        if not DOC_ID_RE.match(doc_id):
+            self._link_page(400, "No such link", "<p>Invalid document id.</p>")
+            return
+        found = store.load_link(doc_id, key, self.data_dir)
+        if found is None:
+            self._link_page(404, "No such link", "<p>There is no such link in this document.</p>")
+            return
+        entry, blob = found
+        target = entry.get("target") or ""
+        if entry.get("kind") == "doc":
+            published = store.find_published_doc(entry, doc_id, self.data_dir)
+            if published:
+                self._redirect(f"/rendered/{published}/index.html")
+                return
+        if blob is not None:
+            # Re-derived from the target here rather than trusting the stored kind.
+            if links.kind_for(target) == "image":
+                mime = links.image_mime(target)
+                self._send_content(blob, mime, no_store=True, csp=SVG_SANDBOX_CSP if mime == "image/svg+xml" else None)
+            elif "raw=1" in query.split("&"):
+                self._send_content(blob, "text/plain; charset=utf-8", no_store=True)
+            else:
+                self._snapshot_page(doc_id, entry, blob)
+            return
+        reason = entry.get("reason") or store.NO_CAPTURE_REASON
+        if entry.get("kind") == "doc":
+            reason = f"it is not published for review yet, and {reason}"
+        shown = html.escape(target or "This link")
+        self._link_page(
+            404,
+            f"{target or 'Link'} isn't available",
+            f"<p><code>{shown}</code> can't be shown: {html.escape(reason)}.</p>"
+            f'<p><a href="/rendered/{html.escape(doc_id)}/index.html">Back to the document</a></p>',
+        )
+
+    def _redirect(self, location: str) -> None:
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _snapshot_page(self, doc_id: str, entry: dict, blob: bytes) -> None:
+        """Read-only, escaped view of a captured file (Markdown included):
+        rendering it again on every GET would be a CPU-cost path for any LAN
+        client, and an escaped <pre> is linear and cannot carry markup."""
+        target = str(entry.get("target") or "")
+        text = blob.decode("utf-8", errors="replace")
+        source_title = doc_id
+        manifest = store.load_manifest(doc_id, self.data_dir)
+        if manifest:
+            source_title = str(manifest.get("title") or doc_id)
+        publish_hint = ""
+        if entry.get("kind") == "doc":
+            publish_hint = (
+                f" To review and comment on it, publish it: <code>md-review render {html.escape(target)}</code>."
+            )
+        raw_href = html.escape(f"/link/{doc_id}/{links.link_key(target)}?raw=1", quote=True)
+        body = (
+            f'<p class="note">Read-only copy of <code>{html.escape(target)}</code>, captured when '
+            f'<a href="/rendered/{html.escape(doc_id)}/index.html">{html.escape(source_title)}</a> was published. '
+            f"It is not published for review.{publish_hint} "
+            f'<a href="{raw_href}">Raw</a></p>'
+            f'<pre class="snapshot">{html.escape(text)}</pre>'
+        )
+        self._link_page(200, target, body)
+
+    def _link_page(self, code: int, title: str, body_html: str) -> None:
+        """Small server-built page for /link: everything interpolated into
+        ``body_html`` must already be escaped by the caller; ``title`` is
+        escaped here."""
+        markup = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{html.escape(title)} · md-review</title>
+<link rel="icon" href="data:,">
+<script>
+{_THEME_BOOTSTRAP_JS}
+</script>
+<link rel="stylesheet" href="/ds/design-app/tokens.css">
+<style>
+body {{ margin: 0; padding: 24px 16px 60px; font-family: var(--rds-font-sans); background: var(--rds-surface); color: var(--rds-ink); }}
+.wrap {{ max-width: 960px; margin: 0 auto; }}
+h1 {{ font-size: 18px; margin: 0 0 10px; overflow-wrap: anywhere; }}
+.note {{ color: var(--rds-ink-5); font-size: 13px; }}
+a {{ color: var(--rds-accent-strong); }}
+pre.snapshot {{ white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--rds-font-mono); font-size: 13px; line-height: 1.5; background: var(--rds-surface-card); border: 1px solid var(--rds-line); border-radius: 8px; padding: 14px; }}
+</style>
+</head>
+<body><div class="wrap"><h1>{html.escape(title)}</h1>{body_html}</div></body>
+</html>
+"""
+        self._html(self._themed_doc_html(markup.encode("utf-8")).decode("utf-8"), code)
 
     # -- index page ---------------------------------------------------------
 
@@ -821,27 +998,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
 <title>md-review</title>
 <link rel="icon" href="data:,">
 <script>
-// ---- theme bootstrap (FOUC guard) --------------------------------------
-// Same script the doc pages carry — keep the two in sync. Runs BEFORE the
-// stylesheet below is fetched, so data-theme is settled before first paint
-// (no light-flash on dark setups). Precedence: per-device override
-// (localStorage mdReviewTheme) > server default (data-theme on <html>) >
-// OS preference (prefers-color-scheme is binary, so OS dark maps to "dark"
-// — Warm Chalkboard; "dusk" is a mid-tone opt-in via the toggle or
-// --theme dusk).
-(() => {{
-  const root = document.documentElement;
-  let stored = null;
-  try {{ stored = localStorage.getItem('mdReviewTheme'); }} catch (err) {{ stored = null; }}
-  if (stored === 'light' || stored === 'dusk' || stored === 'dark') {{
-    root.setAttribute('data-theme', stored);
-    return;
-  }}
-  if (root.hasAttribute('data-theme')) return;  // server pinned a default
-  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {{
-    root.setAttribute('data-theme', 'dark');
-  }}
-}})();
+{_THEME_BOOTSTRAP_JS}
 </script>
 <link rel="stylesheet" href="/ds/design-app/tokens.css">
 <style>
@@ -916,6 +1073,40 @@ code {{ font-family: var(--rds-font-mono); background: var(--rds-surface-rail); 
         message = format % args
         safe = "".join(ch if ch >= " " and ch != "\x7f" else "?" for ch in message)
         sys.stderr.write(f"[md-review] {safe}\n")
+
+
+def parse_links_field(raw: object) -> store.Captures | None:
+    """Validate the optional ``links`` field of /api/render.
+
+    Shape: ``{"files": {target: base64}, "reasons": {target: str}}`` or
+    ``{"disabled": true}``. Absent (an older client) → None. Only shapes and
+    encodings are checked here; which targets count, and every size limit,
+    is enforced by the store against the links its own render pass finds.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("links must be a JSON object")
+    if raw.get("disabled") is True:
+        return store.Captures(disabled=True)
+    files_raw, reasons_raw = raw.get("files", {}), raw.get("reasons", {})
+    if not isinstance(files_raw, dict) or not isinstance(reasons_raw, dict):
+        raise ValueError("links.files and links.reasons must be JSON objects")
+    if len(files_raw) > links.MAX_TARGETS or len(reasons_raw) > links.MAX_TARGETS:
+        raise ValueError(f"links may describe at most {links.MAX_TARGETS} targets")
+    captures = store.Captures()
+    for target, encoded in files_raw.items():
+        if len(target) > MAX_SOURCE_PATH_LENGTH or not isinstance(encoded, str):
+            raise ValueError("links.files maps a target path to base64 file content")
+        try:
+            captures.files[target] = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError):
+            raise ValueError(f"links.files[{target[:80]!r}] is not valid base64") from None
+    for target, reason in reasons_raw.items():
+        if len(target) > MAX_SOURCE_PATH_LENGTH or not isinstance(reason, str):
+            raise ValueError("links.reasons maps a target path to a reason string")
+        captures.reasons[target] = reason[: store.MAX_LINK_REASON_LENGTH]
+    return captures
 
 
 class FramingError(Exception):
