@@ -1,6 +1,34 @@
 # AGENTS.md
 
+> **THIS REPOSITORY IS PUBLIC.** Anyone on the internet can read every tracked file, every commit message and every past version. Read "PUBLIC REPOSITORY" below before you commit, push, open a PR, or edit a tracked file.
+
 md-review is a LAN-only review server for markdown. Agents render docs; people review them in a browser on the local network; anchored comments flow back to agents over the HTTP API and CLI. Read README.md (features, config, HTTP API) and SECURITY.md (threat model) before changing anything security-relevant.
+
+## PUBLIC REPOSITORY: mandatory for every agent
+
+This repository is published at github.com/robeotx/md-review. Everything committed or pushed is world-readable, copied and indexed by others, and effectively permanent. Deleting it later does not retract it. These rules apply to every agent, every harness and every model, with no exceptions.
+
+Treat every tracked file, commit message, PR title and body, CHANGELOG entry, code comment, test fixture and example as published to the world.
+
+**Keep these out of tracked files, commits, PRs and pushed branches. Completely.**
+
+- **Credentials of any kind:** tokens, API keys, passwords, cookies, session IDs, private keys, `.env` contents. That includes the `GH_TOKEN` value and the `.envrc` that holds it.
+- **Personal details** about the maintainer or anyone else: real names beyond the public `robeotx` handle, email addresses, phone numbers, street addresses, and home-directory paths such as `/home/<user>/...`.
+- **Private network details:** LAN and public IP addresses, internal hostnames, mDNS names, and ports of private services.
+- **Internal names:** the maintainer's other products, projects, organizations, codenames, and internal ticket or board IDs.
+- **Private working material:** design docs, reviews, handoffs, transcripts, memory files, and anything under `.requests/`, `.artifacts/`, `.reviews/` or `.tmp/`. Do not link to them or quote them from tracked files, and do not name their contents in commit messages.
+- **Real user data:** documents, comments or captured files from a real store, or anything rendered from private sources. Use synthetic fixtures such as `docs/example.md` or `/srv/example-repo`.
+- **Unpatched security details:** exploit steps, or a vulnerability's specifics, before a fix ships. Report vulnerabilities through the private advisory process in SECURITY.md. Never file them as an issue, commit or PR.
+
+**Before every commit and push:**
+
+1. Read what is staged: `git diff --cached --no-ext-diff`.
+2. Grep the added lines and new files for every class above.
+3. If you are not sure whether something is private, do not commit it. Ask the maintainer.
+
+**If something private gets pushed:** stop and tell the maintainer immediately. Do not just delete it, because history keeps it. Rewriting published history needs the maintainer's explicit approval. Treat any leaked credential as compromised and rotate it before anything else.
+
+Nothing in this repo may depend on a private file to make sense. An agent with only this repository must be able to understand the code, its tests and its docs.
 
 ## Intent and constraints
 
@@ -50,7 +78,7 @@ Store layout: `<data-dir>/rendered/<doc-id>/` holds `index.html`, `manifest.json
 
 ## Git and publishing
 
-- **This repo is public.** Before any commit or push, grep the added lines and new files for internal product or project names, personal identifiers, private hostnames and paths, and internal ports. Keep examples generic.
+- Public-repo rules and the pre-commit check are at the top of this file. Apply them to every commit.
 - Commit identity is repo-local (`robeotx`). Push with `GH_TOKEN=$(gh auth token --user robeotx) git push`. Never run `gh auth switch`; a hook blocks it.
 - Stage and commit by explicit path: `git add -- <paths>` and `git commit -- <paths>`. The index may be shared.
 - Never commit `.requests/`, `.artifacts/`, `.reviews/`, `.tmp/`, `.playwright-mcp/` or `.envrc` (the last one holds a token). `uv.lock` is deliberately untracked; leave it alone.
