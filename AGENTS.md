@@ -85,9 +85,11 @@ Store layout: `<data-dir>/rendered/<doc-id>/` holds `index.html`, `manifest.json
 - Log user-visible changes under `## [Unreleased]` in CHANGELOG.md. Bump the pyproject version only at release time. Pre-1.0, minor bumps may break, and breaking changes are called out.
 - Every route must appear in the README HTTP API table.
 
-## Private context (gitignored)
+## Private context and scratch work (gitignored)
 
 `.requests/` holds design docs and review records; `.artifacts/handoffs/` holds session handoffs. Read them for history, verify against the code before you act on them, and never publish their contents. Have consequential changes (store format, security, the search index) reviewed by a model from a different family before you land them.
+
+**Scratch work goes in `.tmp/`.** Put all private scratch-like work for this repo there: probe scripts, repro files, intermediate outputs, drafts, downloaded samples. `.gitignore` ignores `.tmp/`, which covers everything nested under it. Do not create scratch files in tracked paths, and do not commit anything from `.tmp/`. Use `.tmp/` rather than the session scratchpad for anything tied to this repo, so the work sits next to the code under the ignore rule. Clean up what you no longer need.
 
 ## Open items (do not fix silently)
 
