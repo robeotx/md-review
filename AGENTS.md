@@ -16,7 +16,7 @@ Treat every tracked file, commit message, PR title and body, CHANGELOG entry, co
 - **Personal details** about the maintainer or anyone else: real names beyond the public `robeotx` handle, email addresses, phone numbers, street addresses, and home-directory paths such as `/home/<user>/...`.
 - **Private network details:** LAN and public IP addresses, internal hostnames, mDNS names, and ports of private services.
 - **Internal names:** the maintainer's other products, projects, organizations, codenames, and internal ticket or board IDs.
-- **Private working material:** design docs, reviews, handoffs, transcripts, memory files, and anything under `.requests/`, `.artifacts/`, `.reviews/` or `.tmp/`. Do not link to them or quote them from tracked files, and do not name their contents in commit messages.
+- **Private working material:** design docs, reviews, handoffs, transcripts, memory files, and anything under `.requests/`, `.artifacts/`, `.docs/`, `.reviews/` or `.tmp/`. Do not link to them or quote them from tracked files, and do not name their contents in commit messages.
 - **Real user data:** documents, comments or captured files from a real store, or anything rendered from private sources. Use synthetic fixtures such as `docs/example.md` or `/srv/example-repo`.
 - **Unpatched security details:** exploit steps, or a vulnerability's specifics, before a fix ships. Report vulnerabilities through the private advisory process in SECURITY.md. Never file them as an issue, commit or PR.
 
@@ -81,15 +81,17 @@ Store layout: `<data-dir>/rendered/<doc-id>/` holds `index.html`, `manifest.json
 - Public-repo rules and the pre-commit check are at the top of this file. Apply them to every commit.
 - Commit identity is repo-local (`robeotx`). Push with `GH_TOKEN=$(gh auth token --user robeotx) git push`. Never run `gh auth switch`; a hook blocks it.
 - Stage and commit by explicit path: `git add -- <paths>` and `git commit -- <paths>`. The index may be shared.
-- Never commit `.requests/`, `.artifacts/`, `.reviews/`, `.tmp/`, `.playwright-mcp/` or `.envrc` (the last one holds a token). `uv.lock` is deliberately untracked; leave it alone.
+- Never commit `.requests/`, `.artifacts/`, `.docs/`, `.reviews/`, `.tmp/`, `.playwright-mcp/` or `.envrc` (the last one holds a token). `uv.lock` is deliberately untracked; leave it alone.
 - Log user-visible changes under `## [Unreleased]` in CHANGELOG.md. Bump the pyproject version only at release time. Pre-1.0, minor bumps may break, and breaking changes are called out.
 - Every route must appear in the README HTTP API table.
 
 ## Private context and scratch work (gitignored)
 
-`.requests/` holds design docs and review records; `.artifacts/handoffs/` holds session handoffs. Read them for history, verify against the code before you act on them, and never publish their contents. Have consequential changes (store format, security, the search index) reviewed by a model from a different family before you land them.
+`.requests/` holds design docs and review records. Session handoffs go in `.artifacts/handoffs/`, named `YYMMDD-HHMM_<slug>.md`. Read them for history, verify against the code before you act on them, and never publish their contents. Have consequential changes (store format, security, the search index) reviewed by a model from a different family before you land them.
 
 **Scratch work goes in `.tmp/`.** Put all private scratch-like work for this repo there: probe scripts, repro files, intermediate outputs, drafts, downloaded samples. `.gitignore` ignores `.tmp/`, which covers everything nested under it. Do not create scratch files in tracked paths, and do not commit anything from `.tmp/`. Use `.tmp/` rather than the session scratchpad for anything tied to this repo, so the work sits next to the code under the ignore rule. Clean up what you no longer need.
+
+**Private dev docs go in `.docs/`.** When a scratch file is worth keeping as a private dev doc (a runbook, a design note, a working reference), move it from `.tmp/` to `.docs/`. `.docs/` is gitignored and never published. Its name is not the public `docs/` directory: a doc moves to `docs/` only after the maintainer decides to publish it and it passes the public-repo check. Handoffs do not go in `.docs/`; they stay in `.artifacts/handoffs/`.
 
 ## Open items (do not fix silently)
 
