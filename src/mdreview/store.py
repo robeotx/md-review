@@ -783,7 +783,7 @@ def validate_comment_body(body: object) -> tuple[str, dict, str, str]:
 
 
 def validate_author(value: object) -> str | None:
-    """A usable author string (capped) or None → the server default applies."""
+    """A usable declared author string (capped), or None for unattributed input."""
     if not isinstance(value, str):
         return None
     value = value.strip()

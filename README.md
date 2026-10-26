@@ -143,6 +143,9 @@ Known edges:
   update, without re-rendering or changing the stored page. Names are declared,
   not authenticated. Clearing the field before posting creates an unattributed
   comment; a subsequent page load prefills the default again.
+  Legacy widgets without a name input also send the saved/configured name
+  explicitly through a serve-time compatibility shim; their stored HTML is
+  unchanged.
 
 ## LAN-only security model
 

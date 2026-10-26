@@ -579,9 +579,19 @@ class ReviewHandler(BaseHTTPRequestHandler):
 
     def _comment_author_doc_html(self, content: bytes) -> bytes:
         """Prefill the browser name on old and new pages; API authors stay explicit."""
+        author = json.dumps(self.server.default_author).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+        legacy_body = b"const body = { docId: CFG.docId, docPath: CFG.sourcePath, anchor, quote: anchor.quote, text };"
+        if b"mdReviewAuthor" not in content and b"async function postComment(" in content:
+            # shortcut: matches the original POST body; add other forms if older widgets differ.
+            explicit_author = (
+                f"\n    let authorName = {author};\n"
+                "    try { authorName = localStorage.getItem('mdReviewAuthor') || authorName; }\n"
+                "    catch (err) { console.error('Using the configured comment name; browser storage unavailable.', err); }\n"
+                "    if (authorName) body.author = authorName;"
+            )
+            content = content.replace(legacy_body, legacy_body + explicit_author.encode("utf-8"), 1)
         if not self.server.default_author or b"mdReviewAuthor" not in content:
             return content
-        author = json.dumps(self.server.default_author).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
         script = (
             "<script>try { if (!localStorage.getItem('mdReviewAuthor')) { "
             f"localStorage.setItem('mdReviewAuthor', {author}); "

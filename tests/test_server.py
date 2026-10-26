@@ -584,6 +584,35 @@ class CommentFlowTests(ServerTestCase):
         self.assertNotIn(b'</script><script>alert("name")', page)
         self.assertIn(b"\\u003c/script\\u003e", page)
 
+    def test_legacy_widget_gets_explicit_author_without_changing_stored_page(self) -> None:
+        doc_id = self._render_doc("flow-legacy-author.md")
+        target = self.data_dir / "rendered" / doc_id / "index.html"
+        # Synthetic version of the original widget: no author state or input.
+        original = b'''<!doctype html><html><head></head><body><script>
+        async function postComment(anchor, text) {
+          const body = { docId: CFG.docId, docPath: CFG.sourcePath, anchor, quote: anchor.quote, text };
+          return fetch('/comments', { method: 'POST', body: JSON.stringify(body) });
+        }
+        </script></body></html>'''
+        target.write_bytes(original)
+        for default in ("Tester", ""):
+            with self.subTest(default=default), mock.patch.object(self.server, "default_author", default):
+                status, page, _ = self.get(f"/rendered/{doc_id}/index.html")
+            self.assertEqual(status, 200)
+            self.assertIn(b"body.author = authorName", page)
+            self.assertIn(b"localStorage.getItem('mdReviewAuthor')", page)
+            self.assertIn(f"let authorName = {json.dumps(default)}".encode(), page)
+            self.assertEqual(target.read_bytes(), original)
+
+    def test_standalone_html_without_widget_is_not_given_an_author(self) -> None:
+        doc_id = self._render_doc("flow-standalone-author.md")
+        target = self.data_dir / "rendered" / doc_id / "index.html"
+        original = b"<!doctype html><html><head></head><body>Example page</body></html>"
+        target.write_bytes(original)
+        status, page, _ = self.get(f"/rendered/{doc_id}/index.html")
+        self.assertEqual(status, 200)
+        self.assertEqual(page, original)
+
     def test_comment_on_unknown_doc_404s(self) -> None:
         status, payload = self.post("/comments", {"docId": "ghost-doc", "anchor": self._anchor(), "text": "hi"})
         self.assertEqual(status, 404)

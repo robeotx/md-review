@@ -12,6 +12,8 @@ called out explicitly).
   `Unattributed`. `--default-author` and `MD_REVIEW_AUTHOR` prefill the browser
   name field instead of attributing unnamed API requests. Saved browser names
   still win, and existing rendered pages pick up the prefill when served.
+- Legacy comment widgets without a name input now send the saved/configured
+  browser name explicitly, without re-rendering or rewriting stored pages.
 
 ### Added
 
