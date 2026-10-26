@@ -6,6 +6,13 @@ called out explicitly).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** comment POSTs without a nonblank author are now stored as
+  `Unattributed`. `--default-author` and `MD_REVIEW_AUTHOR` prefill the browser
+  name field instead of attributing unnamed API requests. Saved browser names
+  still win, and existing rendered pages pick up the prefill when served.
+
 ### Added
 
 - **Search on the index page.** A search box finds text across rendered

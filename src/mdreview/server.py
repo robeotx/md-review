@@ -551,10 +551,11 @@ class ReviewHandler(BaseHTTPRequestHandler):
             # server default is therefore stamped onto the <html> tag at
             # SERVE time, so every doc this server serves carries the same
             # default regardless of when/where it was rendered; `system`
-            # serves the bytes untouched. The page's inline bootstrap reads
+            # leaves the theme unchanged. The page's inline bootstrap reads
             # localStorage BEFORE honoring this attribute, so a per-device
             # override still wins.
-            self._send_content(self._themed_doc_html(target.read_bytes()), content_types[".html"], no_store=True)
+            content = self._themed_doc_html(target.read_bytes())
+            self._send_content(self._comment_author_doc_html(content), content_types[".html"], no_store=True)
             return
         # Every doc-dir file is mutable in place: a re-render overwrites the
         # SAME doc dir (same urls) and comments.json grows with each post —
@@ -575,6 +576,18 @@ class ReviewHandler(BaseHTTPRequestHandler):
             return content
         stamped = f'<html lang="en" data-theme="{self.server.theme}">'.encode()
         return content.replace(b'<html lang="en">', stamped, 1)
+
+    def _comment_author_doc_html(self, content: bytes) -> bytes:
+        """Prefill the browser name on old and new pages; API authors stay explicit."""
+        if not self.server.default_author or b"mdReviewAuthor" not in content:
+            return content
+        author = json.dumps(self.server.default_author).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+        script = (
+            "<script>try { if (!localStorage.getItem('mdReviewAuthor')) { "
+            f"localStorage.setItem('mdReviewAuthor', {author}); "
+            "} } catch (err) { console.error('Comment name unavailable; enter a name before posting.', err); }</script>"
+        )
+        return content.replace(b"<head>", b"<head>" + script.encode("utf-8"), 1)
 
     def _serve_manifest(self, target: Path, doc_id: str) -> None:
         """Serve manifest.json with legacy absolute commentsPath redacted.
@@ -711,7 +724,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
                 "anchor": anchor,
                 "quote": quote,
                 "text": text,
-                "author": validate_author(body.get("author")) or self.server.default_author,
+                "author": validate_author(body.get("author")) or "Unattributed",
                 "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "resolved": False,
             }

@@ -122,7 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve_p.add_argument(
         "--default-author",
-        help="comment author when the page doesn't send one (env: MD_REVIEW_AUTHOR; default: OS user)",
+        help="prefill an empty browser name field (env: MD_REVIEW_AUTHOR; default: OS user); API authors stay explicit",
     )
     serve_p.add_argument(
         "--theme",

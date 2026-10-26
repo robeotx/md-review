@@ -525,7 +525,7 @@ class CommentFlowTests(ServerTestCase):
             "/comments", {"docId": doc_id, "anchor": self._anchor(), "text": "first note", "quote": "anchor me"}
         )
         self.assertEqual(status, 201)
-        self.assertEqual(created["author"], "Tester", "default author should apply when body omits it")
+        self.assertEqual(created["author"], "Unattributed", "missing author must not inherit the browser default")
         self.assertFalse(created["resolved"])
         self.assertEqual(created["doc_id"], doc_id)
 
@@ -548,6 +548,41 @@ class CommentFlowTests(ServerTestCase):
         )
         self.assertEqual(status, 201)
         self.assertEqual(created["author"], "reviewer-on-phone")
+
+    def test_browser_default_is_prefilled_on_existing_pages_and_sent_explicitly(self) -> None:
+        doc_id = self._render_doc("flow-browser-author.md")
+        target = self.data_dir / "rendered" / doc_id / "index.html"
+        original = target.read_bytes()
+        status, page, _ = self.get(f"/rendered/{doc_id}/index.html")
+        self.assertEqual(status, 200)
+        self.assertIn(b"if (!localStorage.getItem('mdReviewAuthor'))", page)
+        self.assertIn(b'localStorage.setItem(\'mdReviewAuthor\', "Tester")', page)
+        self.assertLess(page.index(b"localStorage.setItem('mdReviewAuthor'"), page.index(b"let authorName"))
+        self.assertIn(b"if (authorName) body.author = authorName", page)
+        self.assertEqual(target.read_bytes(), original)
+        status, created = self.post(
+            "/comments", {"docId": doc_id, "anchor": self._anchor(), "text": "browser note", "author": "Tester"}
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(created["author"], "Tester")
+
+    def test_browser_headers_do_not_attribute_missing_or_blank_authors(self) -> None:
+        doc_id = self._render_doc("flow-unattributed.md")
+        for fields in ({}, {"author": ""}, {"author": "  "}, {"author": None}):
+            status, created = self.post(
+                "/comments", {"docId": doc_id, "anchor": self._anchor(), "text": "no name", **fields},
+                headers={"Origin": self.url(""), "Sec-Fetch-Site": "same-origin"},
+            )
+            self.assertEqual(status, 201)
+            self.assertEqual(created["author"], "Unattributed")
+
+    def test_browser_default_is_safe_in_inline_script(self) -> None:
+        doc_id = self._render_doc("flow-author-escaping.md")
+        with mock.patch.object(self.server, "default_author", '</script><script>alert("name")</script>'):
+            status, page, _ = self.get(f"/rendered/{doc_id}/index.html")
+        self.assertEqual(status, 200)
+        self.assertNotIn(b'</script><script>alert("name")', page)
+        self.assertIn(b"\\u003c/script\\u003e", page)
 
     def test_comment_on_unknown_doc_404s(self) -> None:
         status, payload = self.post("/comments", {"docId": "ghost-doc", "anchor": self._anchor(), "text": "hi"})
@@ -813,11 +848,11 @@ class ThemeServingTests(unittest.TestCase):
         finally:
             self._stop(tmp, server, thread)
 
-    def test_system_serves_doc_page_bytes_untouched(self) -> None:
-        # No silent rewriting under `system`: what is on disk is what is
-        # served (the theme stamp must be a no-op, not a transformation).
+    def test_system_without_author_prefill_serves_doc_page_bytes_untouched(self) -> None:
+        # Without author prefill, system theme serves the stored bytes unchanged.
         tmp, server, thread, doc_id = self._start("system")
         try:
+            server.default_author = ""
             served = self._get(server, f"/rendered/{doc_id}/index.html")
             on_disk = (Path(tmp.name) / "data" / "rendered" / doc_id / "index.html").read_bytes()
             self.assertEqual(served, on_disk)

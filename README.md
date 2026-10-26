@@ -138,7 +138,11 @@ Known edges:
 - **Threads**: draggable, resizable popovers; resolve/reopen; an inbox
   drawer with open/resolved/all filters.
 - **Author names**: a small name field per device (stored in localStorage);
-  the server's `--default-author` applies when empty.
+  the server's `--default-author` prefills it on page load when empty. Saved
+  names take precedence. This also works for pages rendered before the server
+  update, without re-rendering or changing the stored page. Names are declared,
+  not authenticated. Clearing the field before posting creates an unattributed
+  comment; a subsequent page load prefills the default again.
 
 ## LAN-only security model
 
@@ -215,7 +219,7 @@ Everything is flag > env > default; nothing is hardcoded:
 |---|---|---|
 | `--data-dir` | `MD_REVIEW_DATA_DIR` | `~/.local/share/md-review` |
 | `--ds-dir` | `MD_REVIEW_DS_DIR` | vendored design-system snapshot |
-| `--default-author` | `MD_REVIEW_AUTHOR` | your OS username |
+| `--default-author` | `MD_REVIEW_AUTHOR` | your OS username (browser name prefill only) |
 | `--server` | `MD_REVIEW_SERVER` | render locally |
 | `--host` / `--port` | — | `127.0.0.1` / `8779` |
 | `--mdns` / `--mdns-name` | `MD_REVIEW_MDNS` / `MD_REVIEW_MDNS_NAME` | off / `md-review` |
@@ -244,6 +248,10 @@ other's updates.
 
 A comment record: `{id, doc_id, doc_path, anchor, quote, text, author,
 created_at, resolved}`.
+Missing, null or blank `author` values are stored as `Unattributed`, including
+requests with browser headers. The server never infers the POST author's name
+from `--default-author`; the browser sends its visible name field explicitly.
+If localStorage is unavailable, enter a name in the field before posting.
 
 ## Markdown subset
 
