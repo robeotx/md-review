@@ -22,6 +22,10 @@ called out explicitly).
 - A doc whose `createdAt` is more than a day in the future stays above all
   others in every search and listing. The margin keeps clock skew from
   pinning anything.
+- One-line HTML comments (`<!-- ... -->`) are hidden on the rendered page,
+  as a browser hides them under CommonMark. Code spans and fenced code keep
+  them as text, an unclosed comment stays visible, and a comment never
+  changes a block's anchor, so existing review comments stay attached.
 
 ## [0.5.0] — 2026-10-07
 

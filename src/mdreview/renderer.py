@@ -134,6 +134,42 @@ def _attr(value: str) -> str:
     return html.escape(value.replace("\x00", ""), quote=True).replace("*", "&#42;")
 
 
+_HTML_COMMENT = re.compile(r"<!--.*?-->")
+_CODE_SPAN = re.compile(r"(`+).+?\1")
+
+
+def _hide_html_comments(lines: list[str]) -> list[str]:
+    """Drop one-line HTML comments (`<!-- ... -->`), as a browser hides them
+    under CommonMark. Fenced code and inline code spans keep them as literal
+    text. A comment left open on its line stays visible text, so a typo shows
+    rather than hiding the rest of the document. Run before block parsing, so
+    a comment never changes an anchor's id, hash or quote."""
+    out: list[str] = []
+    in_fence = False
+    for line in lines:
+        # The same fence rules as MarkdownRenderer._render.
+        if in_fence:
+            in_fence = not re.match(r"^```\s*$", line)
+            out.append(line)
+            continue
+        if re.match(r"^```([A-Za-z0-9_-]*)\s*$", line):
+            in_fence = True
+            out.append(line)
+            continue
+        if "<!--" not in line:
+            out.append(line)
+            continue
+        parts: list[str] = []
+        last = 0
+        for span in _CODE_SPAN.finditer(line):
+            parts.append(_HTML_COMMENT.sub("", line[last : span.start()]))
+            parts.append(span.group(0))
+            last = span.end()
+        parts.append(_HTML_COMMENT.sub("", line[last:]))
+        out.append("".join(parts))
+    return out
+
+
 def render_inline_unlinked(text: str) -> str:
     """render_inline with every generated <a> tag removed, keeping its label:
     for outline entries, which are links themselves (nesting <a> is invalid)
@@ -332,7 +368,7 @@ class MarkdownRenderer:
         # either crash the restore step or silently swap in an unrelated code
         # span. Strip it at the door — one rule, all callers.
         markdown = markdown.replace("\x00", "")
-        lines = markdown.splitlines()
+        lines = _hide_html_comments(markdown.splitlines())
         out: list[str] = []
         i = 0
         while i < len(lines):

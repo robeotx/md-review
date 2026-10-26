@@ -650,3 +650,41 @@ class ReviewFindingsRendererTests(unittest.TestCase):
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())
+
+
+class HtmlCommentTests(unittest.TestCase):
+    """A one-line HTML comment is hidden, as a browser hides it under CommonMark.
+    Comments inside code (spans or fences) stay literal text."""
+
+    def test_inline_comment_is_hidden_in_paragraph_list_and_table(self) -> None:
+        body = MarkdownRenderer().render(
+            "**Lead** <!-- card: alpha --> rest of line\n\n"
+            "- **Item** <!-- card: beta --> detail\n\n"
+            "| Lane <!-- card: gamma --> | State |\n|---|---|\n| one <!-- card: delta --> | ok |\n"
+        )
+        self.assertNotIn("card:", body)
+        self.assertNotIn("&lt;!--", body)
+        self.assertIn("<strong>Lead</strong>", body)
+        self.assertIn("rest of line", body)
+        self.assertIn("detail", body)
+
+    def test_comment_does_not_change_anchor_label(self) -> None:
+        plain = MarkdownRenderer().render("- **Item** detail\n")
+        marked = MarkdownRenderer().render("- **Item** <!-- card: beta --> detail\n")
+        for attr in ("data-cmt-anchor", "data-cmt-semantic-key", "data-cmt-content-hash"):
+            value = re.search(attr + r'="([^"]*)"', plain).group(1)
+            self.assertIn(f'{attr}="{value}"', marked)
+
+    def test_comment_only_line_renders_nothing(self) -> None:
+        body = MarkdownRenderer().render("<!-- hidden note -->\n\nText\n")
+        self.assertNotIn("hidden note", body)
+        self.assertIn("Text", body)
+
+    def test_comment_in_code_stays_literal(self) -> None:
+        body = MarkdownRenderer().render("Use `<!-- x -->` here\n\n```\n<!-- y -->\n```\n")
+        self.assertIn("&lt;!-- x --&gt;", body)
+        self.assertIn("&lt;!-- y --&gt;", body)
+
+    def test_unclosed_comment_stays_visible(self) -> None:
+        body = MarkdownRenderer().render("Text <!-- never closed\n")
+        self.assertIn("&lt;!-- never closed", body)
